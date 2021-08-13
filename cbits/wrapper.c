@@ -79,6 +79,54 @@ jv* jv_bool_w (int i) {
   return ptr;
 }
 
+jv* jv_number_w (double d) {
+  jv *ptr = malloc(sizeof *ptr);
+  *ptr = jv_number(d);
+  return ptr;
+}
+
+double jv_number_value_w (jv* x) {
+  return jv_number_value(*x);
+}
+
+int jv_is_integer_w(jv* x) {
+  return jv_is_integer(*x);
+}
+
+jv* jv_array_w() {
+  jv *ptr = malloc(sizeof *ptr);
+  *ptr = jv_array();
+  return ptr;
+}
+
+jv* jv_array_sized_w(int s) {
+  jv *ptr = malloc(sizeof *ptr);
+  *ptr = jv_array_sized(s);
+  return ptr;
+}
+
+int jv_array_length_w (jv* x) {
+  return jv_array_length(*x);
+}
+
+jv* jv_array_get_w (jv* j, int i) {
+  jv *ptr = malloc(sizeof *ptr);
+  *ptr = jv_array_get(*j, i);
+  return ptr;
+}
+
+void jv_array_set_w (jv* j, int i, jv* e) {
+  *j = jv_array_set(*j, i, *e);
+}
+
+void jv_array_append_w(jv* arr, jv* val) {
+  *arr = jv_array_append(*arr, *val);
+}
+
+void jv_array_concat_w(jv* a, jv* b) {
+  *a = jv_array_concat(*a, *b);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 jv* jv_parse_w (const char* str) {
@@ -101,9 +149,6 @@ const char* jv_string_value_w (jv* x) {
 
 jv* jv_dump_string_w (jv* x, int opts) {
   jv* jvPtr = malloc(sizeof(jv));
-  jv result;
-  // does this free x? Yes
-  result = jv_dump_string(*x, opts);
-  *jvPtr = result;
+  *jvPtr = jv_dump_string(*x, opts);
   return jvPtr;
 }

@@ -11,7 +11,7 @@ import           Foreign.C.Types
 newtype Jv = Jv (Ptr Jv)
 
 newtype JvKind = JvKind CInt
-  deriving Eq
+  deriving (Eq, Show, Integral, Real, Num, Enum, Ord)
 
 newtype JvPrintFlags = JvPrintFlags CInt
   deriving (Eq, Bits, Num)
@@ -61,9 +61,11 @@ foreign import ccall unsafe "wrapper.c jv_get_refcnt_w"
 foreign import ccall unsafe "wrapper.c jv_equal_w"
   jvEqual :: Jv -> Jv -> IO CInt
 
+-- | Frees both Jvs
 foreign import ccall unsafe "wrapper.c jv_identical_w"
   jvIdentical :: Jv -> Jv -> IO CInt
 
+-- | Frees both Jvs
 foreign import ccall unsafe "wrapper.c jv_contains_w"
   jvContains :: Jv -> Jv -> IO CInt
 
@@ -90,6 +92,42 @@ foreign import ccall unsafe "wrapper.c jv_false_w"
 
 foreign import ccall unsafe "wrapper.c jv_bool_w"
   jvBool :: CInt -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_number_w"
+  jvNumber :: CDouble -> IO Jv
+
+-- | Does not consume
+foreign import ccall unsafe "wrapper.c jv_number_value_w"
+  jvNumberValue :: Jv -> IO CDouble
+
+foreign import ccall unsafe "wrapper.c jv_is_integer_w"
+  jvIsInteger :: Jv -> IO CInt
+
+foreign import ccall unsafe "wrapper.c jv_array_w"
+  jvArray :: IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_array_sized_w"
+  jvArraySized :: CInt -> IO Jv
+
+-- | Consumes
+foreign import ccall unsafe "wrapper.c jv_array_length_w"
+  jvArrayLength :: Jv -> IO CInt
+
+-- | Consumes input
+foreign import ccall unsafe "wrapper.c jv_array_get_w"
+  jvArrayGet :: Jv -> CInt -> IO Jv
+
+-- | Does not free the value arg unless the idx is bad
+foreign import ccall unsafe "wrapper.c jv_array_set_w"
+  jvArraySet :: Jv -> CInt -> Jv -> IO ()
+
+-- | First arg is array, second is a value
+foreign import ccall unsafe "wrapper.c jv_array_append_w"
+  jvArrayAppend :: Jv -> Jv -> IO ()
+
+-- | first arg is mutated
+foreign import ccall unsafe "wrapper.c jv_array_concat_w"
+  jvArrayConcat :: Jv -> Jv -> IO ()
 
 --------------------------------------------------------------------------------
 

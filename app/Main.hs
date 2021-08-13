@@ -1,6 +1,7 @@
 {-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
 module Main where
 
 import qualified Control.Functor.Linear as L
@@ -14,17 +15,18 @@ import           Jq
 
 main :: IO ()
 main = L.withLinearIO P.$ L.do
-  ep <- parse "{\"test\": true}"
-  -- case statement doesn't work :(
-  either
-    (\(Ur err) -> L.do
+  parse "{\"test\": true}" L.>>= \case
+    Left (Ur err) -> L.do
       L.fromSystemIO $ BS.putStrLn err
       L.pure (Ur ())
-    )
-    (\x -> L.do
-      Ur bs <- prettyPrint x defPrintOpts
-        { printPretty = True, printColor = True }
+    Right x -> L.do
+      str <- string "hello?"
+      b <- bool False
+      arr <- array [str, x, b]
+
+      Ur bs <- render arr defPrintOpts
+        { printPretty = True, printColor = True, printSpace1 = True }
+
       L.fromSystemIO $ BS.putStrLn bs
       L.pure (Ur ())
-    ) ep
 

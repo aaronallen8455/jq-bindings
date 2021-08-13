@@ -9,12 +9,22 @@ module Jq
   , copy
   , PrintOpts(..)
   , defPrintOpts
-  , prettyPrint
+  , render
+  , Kind(..)
+  , getKind
+  , equal
+  , identical
+  , contains
+  , nullJv
+  , bool
+  , string
+  , array
   ) where
 
 import qualified Control.Functor.Linear as L
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
+import           Data.Foldable (for_)
 import           Data.Unrestricted.Linear (Ur(..))
 import           Foreign.C.String
 import qualified Prelude as P
@@ -29,9 +39,8 @@ free = L.fromSystemIO . UL.toLinear jvFree
 
 parse :: BS.ByteString
       -> L.IO (Either (Ur BS.ByteString) Jv)
-parse str = L.fromSystemIO $ do
-  jv <- BS.useAsCString str jvParse
-  validate jv
+parse str = L.fromSystemIO $
+  validate P.=<< BS.useAsCString str jvParse
 
 parseMaybe :: BS.ByteString -> L.IO (Maybe Jv)
 parseMaybe str =
@@ -104,10 +113,54 @@ printOptsToFlags MkPrintOpts{..} =
     ]
 
 -- Consumes the Jv argument
-prettyPrint :: Jv %1 -> PrintOpts -> L.IO (Ur BS.ByteString)
-prettyPrint = UL.toLinear $ \jv opts -> L.fromSystemIO $ P.do
+render :: Jv %1 -> PrintOpts -> L.IO (Ur BS.ByteString)
+render = UL.toLinear $ \jv opts -> L.fromSystemIO $ P.do
   x <- jvDumpString jv (printOptsToFlags opts)
   cStr <- jvStringValue x
   jvFree x
   bs <- BS.packCString cStr
   P.pure (Ur bs)
+
+data Kind
+  = InvalidKind
+  | NullKind
+  | FalseKind
+  | TrueKind
+  | NumberKind
+  | StringKind
+  | ArrayKind
+  | ObjectKind
+  deriving (P.Show, P.Eq, P.Enum, P.Bounded)
+
+getKind :: Jv %1 -> L.IO (Ur Kind, Jv)
+getKind = UL.toLinear $ \jv -> L.fromSystemIO $ do
+  k <- fromIntegral P.<$> jvGetKind jv
+  P.pure (Ur (toEnum k), jv)
+
+equal :: Jv %1 -> Jv %1 -> L.IO (Ur Bool)
+equal = UL.toLinear $ \a -> UL.toLinear $ \b -> L.fromSystemIO $
+  Ur P.. toEnum P.. fromIntegral P.<$> jvEqual a b
+
+identical :: Jv %1 -> Jv %1 -> L.IO (Ur Bool)
+identical = UL.toLinear $ \a -> UL.toLinear $ \b -> L.fromSystemIO $
+  Ur P.. toEnum P.. fromIntegral P.<$> jvIdentical a b
+
+contains :: Jv %1 -> Jv %1 -> L.IO (Ur Bool)
+contains = UL.toLinear $ \a -> UL.toLinear $ \b -> L.fromSystemIO $
+  Ur P.. toEnum P.. fromIntegral P.<$> jvContains a b
+
+nullJv :: L.IO Jv
+nullJv = L.fromSystemIO jvNull
+
+bool :: Bool -> L.IO Jv
+bool b = L.fromSystemIO $ jvBool P.. fromIntegral P.$ fromEnum b
+
+string :: BS.ByteString -> L.IO Jv
+string bs = L.fromSystemIO $ BS.useAsCString bs jvString
+
+array :: [Jv] %1 -> L.IO Jv
+array = UL.toLinear $ \es -> L.fromSystemIO $ do
+  arr <- jvArraySized (fromIntegral P.$ P.length es)
+  for_ (es `P.zip` [0..]) P.$ \(e, idx) ->
+    jvArraySet arr idx e
+  P.pure arr
