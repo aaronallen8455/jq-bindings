@@ -3,15 +3,23 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RoleAnnotations #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE LambdaCase #-}
 module Jq
-  ( free
-  , parse
-  , copy
+  ( parse
   , PrintOpts(..)
   , defPrintOpts
   , render
+  , HasJv(..)
   , Kind(..)
+  , KindSing(..)
   , getKind
+  , typeJv
+  , withSomeTypedJv
   , equal
   , identical
   , contains
@@ -19,6 +27,10 @@ module Jq
   , bool
   , string
   , array
+  , arrayAppend
+  , arrayConcat
+  , arrayGet
+  , arraySet
   ) where
 
 import qualified Control.Functor.Linear as L
@@ -33,9 +45,6 @@ import qualified System.IO.Linear as L
 import qualified Unsafe.Linear as UL
 
 import           Jq.Internal.Bindings
-
-free :: Jv %1 -> L.IO ()
-free = L.fromSystemIO . UL.toLinear jvFree
 
 parse :: BS.ByteString
       -> L.IO (Either (Ur BS.ByteString) Jv)
@@ -67,10 +76,30 @@ validate jv = do
             bs <- BS.packCString cStr
             P.pure (Left $ Ur bs)
 
-copy :: Jv %1 -> L.IO (Jv, Jv)
-copy = UL.toLinear $ \jv -> L.do
-  jv2 <- L.fromSystemIO (jvCopy jv)
-  L.pure (jv, jv2)
+class HasJv x where
+  copy :: x %1 -> L.IO (x, x)
+  free :: x %1 -> L.IO ()
+  forgetType :: x %1 -> Jv
+
+instance HasJv Jv where
+  copy = UL.toLinear $ \jv -> L.do
+    jv2 <- L.fromSystemIO (jvCopy jv)
+    L.pure (jv, jv2)
+  free = L.fromSystemIO . UL.toLinear jvFree
+  forgetType = id
+
+instance HasJv (TypedJv k) where
+  copy (TypedJv jv) =
+    (\(v, v2) -> (TypedJv v, TypedJv v2)) L.<$> copy jv
+  free (TypedJv jv) = free jv
+  forgetType (TypedJv jv) = jv
+
+instance HasJv SomeTypedJv where
+  copy (MkSomeTypedJv k tjv) = L.do
+    (v1, v2) <- copy tjv
+    L.pure (MkSomeTypedJv k v1, MkSomeTypedJv k v2)
+  free (MkSomeTypedJv _ tjv) = free tjv
+  forgetType (MkSomeTypedJv _ (TypedJv jv)) = jv
 
 data PrintOpts =
   MkPrintOpts
@@ -113,9 +142,9 @@ printOptsToFlags MkPrintOpts{..} =
     ]
 
 -- Consumes the Jv argument
-render :: Jv %1 -> PrintOpts -> L.IO (Ur BS.ByteString)
+render :: HasJv jv => jv %1 -> PrintOpts -> L.IO (Ur BS.ByteString)
 render = UL.toLinear $ \jv opts -> L.fromSystemIO $ P.do
-  x <- jvDumpString jv (printOptsToFlags opts)
+  x <- jvDumpString (forgetType jv) (printOptsToFlags opts)
   cStr <- jvStringValue x
   jvFree x
   bs <- BS.packCString cStr
@@ -132,35 +161,105 @@ data Kind
   | ObjectKind
   deriving (P.Show, P.Eq, P.Enum, P.Bounded)
 
+data KindSing (k :: Kind) where
+  InvalidS :: KindSing 'InvalidKind
+  NullS   :: KindSing 'NullKind
+  FalseS  :: KindSing 'FalseKind
+  TrueS   :: KindSing 'TrueKind
+  NumberS :: KindSing 'NumberKind
+  StringS :: KindSing 'StringKind
+  ArrayS  :: KindSing 'ArrayKind
+  ObjectS :: KindSing 'ObjectKind
+
+type role TypedJv representational
+newtype TypedJv (k :: Kind) = TypedJv Jv
+
+data SomeTypedJv where
+  MkSomeTypedJv :: KindSing k -> TypedJv k %1 -> SomeTypedJv
+
+-- Needs to be linear?
+withSomeTypedJv :: SomeTypedJv -> (forall k. KindSing k -> TypedJv k -> a) -> a
+withSomeTypedJv (MkSomeTypedJv sing jv) f = f sing jv
+
 getKind :: Jv %1 -> L.IO (Ur Kind, Jv)
 getKind = UL.toLinear $ \jv -> L.fromSystemIO $ do
-  k <- fromIntegral P.<$> jvGetKind jv
-  P.pure (Ur (toEnum k), jv)
+  k <- toEnum P.. fromIntegral P.<$> jvGetKind jv
+  P.pure (Ur k, jv)
 
-equal :: Jv %1 -> Jv %1 -> L.IO (Ur Bool)
+typeJv :: Jv %1 -> L.IO SomeTypedJv
+typeJv = UL.toLinear $ \jv -> L.fromSystemIO $ typeJv' jv
+
+typeJv' :: Jv -> P.IO SomeTypedJv
+typeJv' jv = do
+  k <- toEnum P.. P.fromIntegral P.<$> jvGetKind jv
+  P.pure P.$ case k of
+    InvalidKind -> MkSomeTypedJv InvalidS (TypedJv jv)
+    NullKind    -> MkSomeTypedJv NullS (TypedJv jv)
+    FalseKind   -> MkSomeTypedJv FalseS (TypedJv jv)
+    TrueKind    -> MkSomeTypedJv TrueS (TypedJv jv)
+    NumberKind  -> MkSomeTypedJv NumberS (TypedJv jv)
+    StringKind  -> MkSomeTypedJv StringS (TypedJv jv)
+    ArrayKind   -> MkSomeTypedJv ArrayS (TypedJv jv)
+    ObjectKind  -> MkSomeTypedJv ObjectS (TypedJv jv)
+
+equal :: (HasJv a, HasJv b) => a %1 -> b %1 -> L.IO (Ur Bool)
 equal = UL.toLinear $ \a -> UL.toLinear $ \b -> L.fromSystemIO $
-  Ur P.. toEnum P.. fromIntegral P.<$> jvEqual a b
+  Ur P.. toEnum P.. fromIntegral
+    P.<$> jvEqual (forgetType a) (forgetType b)
 
-identical :: Jv %1 -> Jv %1 -> L.IO (Ur Bool)
+identical :: (HasJv a, HasJv b) => a %1 -> b %1 -> L.IO (Ur Bool)
 identical = UL.toLinear $ \a -> UL.toLinear $ \b -> L.fromSystemIO $
-  Ur P.. toEnum P.. fromIntegral P.<$> jvIdentical a b
+  Ur P.. toEnum P.. fromIntegral
+    P.<$> jvIdentical (forgetType a) (forgetType b)
 
-contains :: Jv %1 -> Jv %1 -> L.IO (Ur Bool)
+contains :: (HasJv a, HasJv b) => a %1 -> b %1 -> L.IO (Ur Bool)
 contains = UL.toLinear $ \a -> UL.toLinear $ \b -> L.fromSystemIO $
-  Ur P.. toEnum P.. fromIntegral P.<$> jvContains a b
+  Ur P.. toEnum P.. fromIntegral
+    P.<$> jvContains (forgetType a) (forgetType b)
 
-nullJv :: L.IO Jv
-nullJv = L.fromSystemIO jvNull
+nullJv :: L.IO (TypedJv 'NullKind)
+nullJv = L.fromSystemIO (TypedJv P.<$> jvNull)
 
 bool :: Bool -> L.IO Jv
 bool b = L.fromSystemIO $ jvBool P.. fromIntegral P.$ fromEnum b
 
-string :: BS.ByteString -> L.IO Jv
-string bs = L.fromSystemIO $ BS.useAsCString bs jvString
+string :: BS.ByteString -> L.IO (TypedJv 'StringKind)
+string bs =
+  L.fromSystemIO $ BS.useAsCString bs (P.fmap TypedJv P.. jvString)
 
-array :: [Jv] %1 -> L.IO Jv
+array :: [Jv] %1 -> L.IO (TypedJv 'ArrayKind)
 array = UL.toLinear $ \es -> L.fromSystemIO $ do
   arr <- jvArraySized (fromIntegral P.$ P.length es)
   for_ (es `P.zip` [0..]) P.$ \(e, idx) ->
     jvArraySet arr idx e
+  P.pure (TypedJv arr)
+
+arrayAppend :: HasJv el
+            => TypedJv 'ArrayKind %1 -> el %1 -> L.IO (TypedJv 'ArrayKind)
+arrayAppend = UL.toLinear $ \a@(TypedJv arr) ->
+              UL.toLinear $ \el -> L.fromSystemIO $ do
+  jvArrayAppend arr (forgetType el)
+  P.pure a
+
+arrayConcat
+  :: TypedJv 'ArrayKind %1
+  -> TypedJv 'ArrayKind %1
+  -> L.IO (TypedJv 'ArrayKind)
+arrayConcat = UL.toLinear $ \(TypedJv a) ->
+              UL.toLinear $ \(TypedJv b) -> L.fromSystemIO $ do
+  jvArrayConcat a b
+  P.pure (TypedJv a)
+
+arrayGet :: TypedJv 'ArrayKind %1 -> Int -> L.IO (Maybe SomeTypedJv)
+arrayGet = UL.toLinear $ \arr idx -> L.fromSystemIO $ do
+  el <- jvArrayGet (forgetType arr) (fromIntegral idx)
+  tjv <- typeJv' el
+  P.pure P.$ withSomeTypedJv tjv P.$ \case
+    InvalidS -> \_ -> Nothing
+    _ -> \_ -> Just tjv
+
+arraySet :: HasJv el
+         => TypedJv 'ArrayKind %1 -> Int -> el %1 -> L.IO (TypedJv 'ArrayKind)
+arraySet = UL.toLinear $ \arr idx -> UL.toLinear $ \el -> L.fromSystemIO $ do
+  jvArraySet (forgetType arr) (fromIntegral idx) (forgetType el)
   P.pure arr
