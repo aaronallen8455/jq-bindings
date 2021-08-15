@@ -129,16 +129,53 @@ foreign import ccall unsafe "wrapper.c jv_array_append_w"
 foreign import ccall unsafe "wrapper.c jv_array_concat_w"
   jvArrayConcat :: Jv -> Jv -> IO ()
 
---------------------------------------------------------------------------------
+foreign import ccall unsafe "wrapper.c jv_array_slice_w"
+  jvArraySlice :: Jv -> CInt -> CInt -> IO Jv
 
-foreign import ccall unsafe "wrapper.c jv_parse_w"
-  jvParse :: CString -> IO Jv
+foreign import ccall unsafe "wrapper.c jv_array_indexes_w"
+  jvArrayIndexes :: Jv -> Jv -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_string_value_w"
+  jvStringValue :: Jv -> IO CString
 
 foreign import ccall unsafe "wrapper.c jv_string_w"
   jvString :: CString -> IO Jv
 
-foreign import ccall unsafe "wrapper.c jv_string_value_w"
-  jvStringValue :: Jv -> IO CString
+foreign import ccall unsafe "wrapper.c jv_string_length_bytes_w"
+  jvStringLengthBytes :: Jv -> IO CInt
+
+foreign import ccall unsafe "wrapper.c jv_string_length_codepoints_w"
+  jvStringLengthCodepoints :: Jv -> IO CInt
+
+foreign import ccall unsafe "wrapper.c jv_string_indexes_w"
+  jvStringIndexes :: Jv -> Jv -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_string_slice_w"
+  jvStringSlice :: Jv -> CInt -> CInt -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_object_w"
+  jvObject :: IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_object_get_w"
+  jvObjectGet :: Jv -> Jv -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_object_set_w"
+  jvObjectSet :: Jv -> Jv -> Jv -> IO ()
+
+foreign import ccall unsafe "wrapper.c jv_object_delete_w"
+  jvObjectDelete :: Jv -> Jv -> IO ()
+
+foreign import ccall unsafe "wrapper.c jv_object_length_w"
+  jvObjectLength :: Jv -> IO CInt
+
+foreign import ccall unsafe "wrapper.c jv_object_merge_w"
+  jvObjectMerge :: Jv -> Jv -> IO ()
+
+foreign import ccall unsafe "wrapper.c jv_object_merge_recursive_w"
+  jvObjectMergeRecursive :: Jv -> Jv -> IO ()
+
+foreign import ccall unsafe "wrapper.c jv_parse_w"
+  jvParse :: CString -> IO Jv
 
 -- | Frees the Jv
 foreign import ccall unsafe "wrapper.c jv_dump_string_w"
