@@ -234,6 +234,14 @@ void jv_object_merge_recursive_w(jv* a, jv* b) {
   *a = jv_object_merge_recursive(*a, *b);
 }
 
+void jv_setpath_w (jv* x, jv* path, jv* v) {
+  *x = jv_setpath(*x, *path, *v);
+}
+
+void jv_getpath_w(jv* x, jv* path) {
+  *x = jv_getpath(*x, *path);
+}
+
 jv* jv_parse_w (const char* str) {
   jv *jvPtr = malloc(sizeof *jvPtr);
   jv result = jv_parse(str);

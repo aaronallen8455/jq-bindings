@@ -47,23 +47,37 @@ main = L.withLinearIO P.$ L.do
       sliced <- arraySlice arr6 1 5
 
       obj <- object
-      key <- string "key"
-      obj2 <- objectSet obj key sliced
+      obj2 <- objectSet obj "key" sliced
       obj3 <- objectMerge obj2 x'
       (obj3, obj3') <- copy obj3
-      s <- string "bar"
-      obj4 <- objectSet obj3 s obj3'
+      obj4 <- objectSet obj3 "bar" obj3'
       (obj4, obj5) <- copy obj4
 
-      fieldKey <- string "key"
-      objectGet obj4 fieldKey L.>>= \case
+      objectGet obj4 "key" L.>>= \case
         Nothing -> L.fromSystemIO $ BS.putStrLn "field not found"
         Just field -> L.do
           Ur fieldBs <- render field defPrintOpts
           L.fromSystemIO $ BS.putStrLn fieldBs
 
+      (obj5, obj6) <- copy obj5
       Ur bs <- render obj5 defPrintOpts
         { printPretty = True, printColor = True, printSpace1 = True }
 
       L.fromSystemIO $ BS.putStrLn bs
+
+      (obj6, obj7) <- copy obj6
+
+      getPath (forgetType obj6) ["key", 0, "test"] L.>>= \case
+        Just thing -> L.do
+          Ur bs2 <- render thing defPrintOpts
+          L.fromSystemIO $ BS.putStrLn bs2
+        Nothing -> L.fromSystemIO $ BS.putStrLn "doesn't exist"
+
+      bool False L.>>= setPath (forgetType obj7) ["key", 0, "test"] L.>>= \case
+        Just obj7 -> L.do
+          Ur bs <- render obj7 defPrintOpts
+            { printPretty = True, printColor = True, printSpace1 = True }
+          L.fromSystemIO $ BS.putStrLn bs
+        Nothing -> L.pure ()
+
   L.pure (Ur ())

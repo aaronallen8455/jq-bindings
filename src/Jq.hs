@@ -13,45 +13,51 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Jq
-  ( parse
-  , parseMaybe
-  , parseTyped
-  , PrintOpts(..)
-  , defPrintOpts
-  , render
-  , HasJv(..)
-  , free
+  ( HasJv(..)
   , Kind(..)
   , KindSing(..)
-  , getKind
-  , TypedJv
+  , Path
+  , PathComponent(..)
+  , PrintOpts(..)
   , SomeTypedJv(..)
-  , typeJv
-  , withSomeTypedJv
-  , cast
-  , equal
-  , identical
-  , contains
-  , nullJv
-  , bool
+  , TypedJv
   , array
   , arrayAppend
   , arrayConcat
   , arrayGet
+  , arrayIndexes
   , arraySet
   , arraySlice
-  , arrayIndexes
-  , string
-  , stringValue
-  , stringIndexes
-  , stringSlice
+  , bool
+  , cast
+  , contains
+  , defPrintOpts
+  , equal
+  , free
+  , getKind
+  , getPath
+  , identical
+  , nullJv
+  , number
+  , numberValue
   , object
-  , objectGet
-  , objectSet
   , objectDelete
+  , objectGet
   , objectLength
   , objectMerge
   , objectMergeRecursive
+  , objectSet
+  , parse
+  , parseMaybe
+  , parseTyped
+  , render
+  , setPath
+  , string
+  , stringIndexes
+  , stringSlice
+  , stringValue
+  , typeJv
+  , withSomeTypedJv
   ) where
 
 import qualified Control.Functor.Linear as L
@@ -59,9 +65,12 @@ import qualified Control.Monad.IO.Class.Linear as L
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import           Data.Foldable (for_)
+import qualified Data.Functor.Linear as FL
+import           Data.String
 import           Data.Type.Equality ((:~:)(..))
 import           Data.Unrestricted.Linear (Ur(..))
 import           Foreign.C.String
+import           Foreign.C.Types
 import qualified Prelude as P
 import           Prelude.Linear
 import qualified System.IO.Linear as L
@@ -126,18 +135,17 @@ typeJv = UL.toLinear $ \jv -> L.liftSystemIO P.$ typeJv' jv
 typeJv' :: Jv -> P.IO (Maybe SomeTypedJv)
 typeJv' jv = do
   k <- toEnum P.. P.fromIntegral P.<$> jvGetKind jv
-  P.pure P.$ case k of
-    InvalidKind -> Nothing
-    NullKind    -> Just $ MkSomeTypedJv NullS (TypedJv jv)
-    FalseKind   -> Just $ MkSomeTypedJv FalseS (TypedJv jv)
-    TrueKind    -> Just $ MkSomeTypedJv TrueS (TypedJv jv)
-    NumberKind  -> Just $ MkSomeTypedJv NumberS (TypedJv jv)
-    StringKind  -> Just $ MkSomeTypedJv StringS (TypedJv jv)
-    ArrayKind   -> Just $ MkSomeTypedJv ArrayS (TypedJv jv)
-    ObjectKind  -> Just $ MkSomeTypedJv ObjectS (TypedJv jv)
+  case k of
+    InvalidKind -> Nothing P.<$ jvFree jv
+    NullKind    -> P.pure P.. Just P.$ MkSomeTypedJv NullS (TypedJv jv)
+    FalseKind   -> P.pure P.. Just P.$ MkSomeTypedJv FalseS (TypedJv jv)
+    TrueKind    -> P.pure P.. Just P.$ MkSomeTypedJv TrueS (TypedJv jv)
+    NumberKind  -> P.pure P.. Just P.$ MkSomeTypedJv NumberS (TypedJv jv)
+    StringKind  -> P.pure P.. Just P.$ MkSomeTypedJv StringS (TypedJv jv)
+    ArrayKind   -> P.pure P.. Just P.$ MkSomeTypedJv ArrayS (TypedJv jv)
+    ObjectKind  -> P.pure P.. Just P.$ MkSomeTypedJv ObjectS (TypedJv jv)
 
--- should be linear?
-withSomeTypedJv :: SomeTypedJv -> (forall k. KindSing k -> TypedJv k -> a) -> a
+withSomeTypedJv :: SomeTypedJv %1 -> (forall k. KindSing k -> TypedJv k %1 -> a) -> a
 withSomeTypedJv (MkSomeTypedJv sing jv) f = f sing jv
 
 -- | Frees the 'Jv' if it doesn't have the expected kind.
@@ -192,7 +200,7 @@ parseMaybe :: L.MonadIO m => BS.ByteString -> m (Maybe SomeTypedJv)
 parseMaybe str =
   either (\(Ur _) -> Nothing) Just L.<$> parse str
 
-parseTyped :: forall kind m. (KnownKind kind, L.MonadIO m)
+parseTyped :: (KnownKind kind, L.MonadIO m)
            => BS.ByteString -> m (Maybe (TypedJv kind))
 parseTyped str =
   parseMaybe str L.>>= \case
@@ -304,8 +312,30 @@ nullJv = L.liftSystemIO (TypedJv P.<$> jvNull)
 bool :: L.MonadIO m => Bool -> m Jv
 bool b = L.liftSystemIO P.. jvBool P.. fromIntegral P.$ fromEnum b
 
+number :: (L.MonadIO m, Real n) => n -> m (TypedJv 'NumberKind)
+number n = L.liftSystemIO P.$ number' n
+
+number' :: Real n => n -> IO (TypedJv 'NumberKind)
+number' n = P.do
+  x <- jvNumber (P.realToFrac n)
+  P.pure (TypedJv x)
+
+numberValue :: L.MonadIO m
+            => TypedJv 'NumberKind %1
+            -> m (Ur Double, TypedJv 'NumberKind)
+numberValue = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
+  CDouble dbl <- jvNumberValue (forgetType jv)
+  P.pure (Ur dbl, jv)
+
+isInteger :: L.MonadIO m => TypedJv 'NumberKind %1 -> m (Ur Bool)
+isInteger = UL.toLinear $ \jv -> L.liftSystemIOU P.$
+  toEnum P.. P.fromIntegral P.<$> jvIsInteger (forgetType jv)
+
 array :: L.MonadIO m => [Jv] %1 -> m (TypedJv 'ArrayKind)
-array = UL.toLinear $ \es -> L.liftSystemIO P.$ do
+array = UL.toLinear $ \es -> L.liftSystemIO (array' es)
+
+array' :: [Jv] -> IO (TypedJv 'ArrayKind)
+array' es = P.do
   arr <- jvArraySized (fromIntegral P.$ P.length es)
   for_ (es `P.zip` [0..]) P.$ \(e, idx) ->
     jvArraySet arr idx e
@@ -385,28 +415,30 @@ object = TypedJv L.<$> L.liftSystemIO jvObject
 
 objectGet :: L.MonadIO m
           => TypedJv 'ObjectKind %1
-          -> TypedJv 'StringKind %1
+          -> BS.ByteString
           -> m (Maybe SomeTypedJv)
-objectGet = UL.toLinear $ \obj -> UL.toLinear $ \key -> L.liftSystemIO P.$ do
-  typeJv' P.=<< jvObjectGet (forgetType obj) (forgetType key)
+objectGet = UL.toLinear $ \obj key -> L.liftSystemIO P.$ do
+  jvKey <- BS.useAsCString key jvString
+  typeJv' P.=<< jvObjectGet (forgetType obj) jvKey
 
 objectSet :: (HasJv value, L.MonadIO m)
           => TypedJv 'ObjectKind %1
-          -> TypedJv 'StringKind %1
+          -> BS.ByteString
           -> value %1
           -> m (TypedJv 'ObjectKind)
-objectSet = UL.toLinear $ \obj ->
-            UL.toLinear $ \key ->
+objectSet = UL.toLinear $ \obj key ->
             UL.toLinear $ \val -> L.liftSystemIO P.$ do
-  jvObjectSet (forgetType obj) (forgetType key) (forgetType val)
+  jvKey <- BS.useAsCString key jvString
+  jvObjectSet (forgetType obj) jvKey (forgetType val)
   P.pure obj
 
 objectDelete :: L.MonadIO m
              => TypedJv 'ObjectKind %1
-             -> TypedJv 'StringKind %1
+             -> BS.ByteString
              -> m (TypedJv 'ObjectKind)
-objectDelete = UL.toLinear $ \obj -> UL.toLinear $ \key -> L.liftSystemIO P.$ do
-  jvObjectDelete (forgetType obj) (forgetType key)
+objectDelete = UL.toLinear $ \obj key -> L.liftSystemIO P.$ do
+  jvKey <- BS.useAsCString key jvString
+  jvObjectDelete (forgetType obj) jvKey
   P.pure obj
 
 objectLength :: L.MonadIO m
@@ -433,3 +465,48 @@ objectMergeRecursive = UL.toLinear $ \obj1 ->
                        UL.toLinear $ \obj2 -> L.liftSystemIO P.$ do
   jvObjectMergeRecursive (forgetType obj1) (forgetType obj2)
   P.pure obj1
+
+data PathComponent
+  = ArrayIdx Int
+  | ObjectKey BS.ByteString
+
+instance P.Num PathComponent where
+  ArrayIdx a + ArrayIdx b = ArrayIdx (a + b)
+  a + _ = a
+  ArrayIdx a * ArrayIdx b = ArrayIdx (a * b)
+  a * _ = a
+  abs (ArrayIdx a) = ArrayIdx (abs a)
+  abs a = a
+  signum a = a
+  fromInteger = ArrayIdx P.. P.fromIntegral
+  negate (ArrayIdx i) = ArrayIdx (P.negate i)
+  negate a = a
+
+instance IsString PathComponent where
+  fromString = ObjectKey P.. fromString
+
+type Path = [PathComponent]
+
+pathToJv :: Path -> P.IO (TypedJv 'ArrayKind)
+pathToJv path =
+  P.traverse componentToJv path
+    P.>>= array'
+
+componentToJv :: PathComponent -> P.IO Jv
+componentToJv (ArrayIdx i) = P.do
+  TypedJv n <- number' i
+  P.pure n
+componentToJv (ObjectKey key) =
+  BS.useAsCString key jvString
+
+getPath :: L.MonadIO m => Jv %1 -> Path -> m (Maybe SomeTypedJv)
+getPath = UL.toLinear $ \jv path -> L.liftSystemIO P.$ do
+  TypedJv pathJv <- pathToJv path
+  jvGetpath jv pathJv
+  typeJv' jv
+
+setPath :: L.MonadIO m => Jv %1 -> Path -> Jv %1 -> m (Maybe SomeTypedJv)
+setPath = UL.toLinear $ \jv path -> UL.toLinear $ \val -> L.liftSystemIO P.$ do
+  TypedJv pathJv <- pathToJv path
+  jvSetpath jv pathJv val
+  typeJv' jv

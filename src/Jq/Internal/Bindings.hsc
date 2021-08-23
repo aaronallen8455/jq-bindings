@@ -174,6 +174,12 @@ foreign import ccall unsafe "wrapper.c jv_object_merge_w"
 foreign import ccall unsafe "wrapper.c jv_object_merge_recursive_w"
   jvObjectMergeRecursive :: Jv -> Jv -> IO ()
 
+foreign import ccall unsafe "wrapper.c jv_setpath_w"
+  jvSetpath :: Jv -> Jv -> Jv -> IO ()
+
+foreign import ccall unsafe "wrapper.c jv_getpath_w"
+  jvGetpath :: Jv -> Jv -> IO ()
+
 foreign import ccall unsafe "wrapper.c jv_parse_w"
   jvParse :: CString -> IO Jv
 
