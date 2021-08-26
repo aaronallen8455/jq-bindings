@@ -3,7 +3,7 @@ cabal-version:       >=1.10
 -- init'.  For further documentation, see
 -- http://haskell.org/cabal/users-guide/
 
-name:                jq-bindings
+name:                jq-bindings-core
 version:             0.1.0.0
 -- synopsis:
 -- description:
@@ -15,7 +15,7 @@ maintainer:          aaron@flipstone.com
 -- copyright:
 -- category:
 build-type:          Simple
-extra-source-files: CHANGELOG.md, cbits
+extra-source-files: cbits
 
 executable exe
   main-is:             Main.hs
@@ -23,7 +23,7 @@ executable exe
   -- other-extensions:
   build-depends: base
                , linear-base
-               , jq-bindings
+               , jq-bindings-core
                , bytestring
   hs-source-dirs: app
 
@@ -39,3 +39,5 @@ library
   extra-libraries: jq
   c-sources: cbits/wrapper.c
   hs-source-dirs: src
+  ghc-options: -Wall
+               -Wno-name-shadowing

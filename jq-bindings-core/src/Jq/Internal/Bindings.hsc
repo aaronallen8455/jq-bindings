@@ -186,3 +186,6 @@ foreign import ccall unsafe "wrapper.c jv_parse_w"
 -- | Frees the Jv
 foreign import ccall unsafe "wrapper.c jv_dump_string_w"
   jvDumpString :: Jv -> JvPrintFlags -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_keys_w"
+  jvKeys :: Jv -> IO Jv

@@ -254,3 +254,9 @@ jv* jv_dump_string_w (jv* x, int opts) {
   *jvPtr = jv_dump_string(*x, opts);
   return jvPtr;
 }
+
+jv* jv_keys_w (jv* x) {
+  jv* jvPtr = malloc(sizeof(jv));
+  *jvPtr = jv_keys(*x);
+  return jvPtr;
+}
