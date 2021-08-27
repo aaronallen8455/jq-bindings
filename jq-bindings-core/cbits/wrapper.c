@@ -14,6 +14,7 @@ jv* jv_copy_w (jv* x) {
 
 void jv_free_w (jv* x) {
   jv_free(*x);
+  free(x);
 }
 
 int jv_get_refcnt_w (jv* x) {

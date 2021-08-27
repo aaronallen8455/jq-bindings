@@ -26,11 +26,11 @@ main = L.withLinearIO P.$ L.do
       (x, x') <- copy x
       str <- string "hello?"
       b <- bool False
-      arr <- array [forgetType str, forgetType x, b]
+      arr <- array [forgetType str, forgetType x, forgetType b]
 
       str2 <- string "foo"
       b2 <- bool True
-      arr2 <- array [forgetType str2, b2]
+      arr2 <- array [forgetType str2, forgetType b2]
 
       arr3 <- arrayConcat arr arr2
 

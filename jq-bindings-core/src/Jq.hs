@@ -527,14 +527,15 @@ componentToJv (ArrayIdx i) = P.do
 componentToJv (ObjectKey key) =
   BS.useAsCString key jvString
 
-getPath :: L.MonadIO m => Jv %1 -> Path -> m (Maybe SomeTypedJv)
+getPath :: (HasJv jv, L.MonadIO m) => jv %1 -> Path -> m (Maybe SomeTypedJv)
 getPath = UL.toLinear $ \jv path -> L.liftSystemIO P.$ do
   TypedJv pathJv <- pathToJv path
-  jvGetpath jv pathJv
-  typeJv' jv
+  jvGetpath (forgetType jv) pathJv
+  typeJv' (forgetType jv)
 
-setPath :: L.MonadIO m => Jv %1 -> Path -> Jv %1 -> m (Maybe SomeTypedJv)
+setPath :: (HasJv root, HasJv val, L.MonadIO m)
+        => root %1 -> Path -> val %1 -> m (Maybe SomeTypedJv)
 setPath = UL.toLinear $ \jv path -> UL.toLinear $ \val -> L.liftSystemIO P.$ do
   TypedJv pathJv <- pathToJv path
-  jvSetpath jv pathJv val
-  typeJv' jv
+  jvSetpath (forgetType jv) pathJv (forgetType val)
+  typeJv' (forgetType jv)
