@@ -15,6 +15,7 @@ import           Data.Aeson as Aeson
 import           Data.Foldable (toList)
 import qualified Data.Functor.Linear as L hiding (pure, (<$>))
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Scientific as Sci
 import           Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import           Data.Unrestricted.Linear (Ur(..))
@@ -40,7 +41,7 @@ toAesonValue sjv =
     NumberS -> L.do
       (jv, Ur n) <- numberValue jv
       free jv
-      L.pure (Ur (Number (realToFrac n)))
+      L.pure (Ur (Number (Sci.fromFloatDigits n)))
 
     StringS -> L.do
       (jv, Ur bs) <- stringValue jv
