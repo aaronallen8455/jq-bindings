@@ -7,8 +7,10 @@ import           Foreign.C.String
 import           Foreign.C.Types
 
 #include "jv.h"
+#include "jq.h"
 
 newtype Jv = Jv (Ptr Jv)
+newtype JqState = JqState (Ptr JqState)
 
 newtype JvKind = JvKind CInt
   deriving (Eq, Show, Integral, Real, Num, Enum, Ord)
@@ -189,3 +191,22 @@ foreign import ccall unsafe "wrapper.c jv_dump_string_w"
 
 foreign import ccall unsafe "wrapper.c jv_keys_w"
   jvKeys :: Jv -> IO Jv
+
+--------------------------------------------------------------------------------
+-- JQ programs
+--------------------------------------------------------------------------------
+
+foreign import ccall unsafe "jq.h jq_init"
+  jqInit :: IO JqState
+
+foreign import ccall unsafe "jq.h jq_compile"
+  jqCompile :: JqState -> CString -> IO CInt
+
+foreign import ccall unsafe "wrapper.c jq_start_w"
+  jqStart :: JqState -> Jv -> CInt -> IO ()
+
+foreign import ccall unsafe "wrapper.c jq_next_w"
+  jqNext :: JqState -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jq_teardown_w"
+  jqTeardown :: JqState -> IO ()

@@ -35,6 +35,7 @@ module Jq
   , contains
   , defPrintOpts
   , equal
+  , execProgram
   , free
   , getKind
   , getPath
@@ -279,8 +280,8 @@ render :: (L.MonadIO m, HasJv jv)
 render = UL.toLinear $ \jv opts -> L.liftSystemIOU P.$ P.do
   x <- jvDumpString (forgetType jv) (printOptsToFlags opts)
   cStr <- jvStringValue x
-  jvFree x
   bs <- BS.packCString cStr
+  jvFree x
   P.pure bs
 
 --------------------------------------------------------------------------------
@@ -539,3 +540,30 @@ setPath = UL.toLinear $ \jv path -> UL.toLinear $ \val -> L.liftSystemIO P.$ do
   TypedJv pathJv <- pathToJv path
   jvSetpath (forgetType jv) pathJv (forgetType val)
   typeJv' (forgetType jv)
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+execProgram
+  :: (HasJv val, L.MonadIO m)
+  => BS.ByteString -> val %1 -> m [SomeTypedJv]
+execProgram pgrm = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
+  jq <- jqInit
+  didCompile <- BS.useAsCString pgrm P.$ jqCompile jq
+  case didCompile of
+    0 -> do
+      jqTeardown jq
+      jvFree (forgetType jv)
+      P.pure []
+
+    _ -> do
+      jqStart jq (forgetType jv) 0 -- what are these flags for?
+      let loop = do
+            mV <- typeJv' P.=<< jqNext jq
+            case mV of
+              Nothing -> P.pure []
+              Just v -> (v :) P.<$> loop
+      res <- loop
+      jqTeardown jq
+      P.pure res

@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -6,14 +7,37 @@
 module Main where
 
 import qualified Control.Functor.Linear as L
+import qualified Data.ByteString as BSS
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Functor.Linear as FL
 import           Data.Unrestricted.Linear (Ur(..))
+import           Foreign.C.String (withCString)
 import qualified Prelude as P
 import           Prelude.Linear
 import qualified System.IO.Linear as L
 
 import           Jq
+import           Jq.Internal.Bindings
+
+pgrm :: IO ()
+pgrm = do
+  s <- jqInit
+  withCString ".test" P.$ jqCompile s
+  jv <- withCString "{\"test\":21}" jvParse
+  jqStart s jv 0
+  jv' <- jqNext s
+  jv'' <- jqNext s
+  jvFree jv''
+  jqTeardown s
+  jvFree jv
+
+  k <- jvGetKind jv'
+  print k
+  jvStr <- jvDumpString jv' 1
+  cStr <- jvStringValue jvStr
+  bs <- BSS.packCString cStr
+  jvFree jvStr
+  print bs
 
 main :: IO ()
 main = L.withLinearIO P.$ L.do
@@ -64,6 +88,15 @@ main = L.withLinearIO P.$ L.do
         { printPretty = True, printColor = True, printSpace1 = True }
 
       L.fromSystemIO $ BS.putStrLn bs
+
+      (obj6, obj) <- copy obj6
+      pgrmResults <- execProgram ".bar.key" obj
+
+      (bss :: [Ur BS.ByteString]) <-
+        FL.traverse (flip render defPrintOpts { printPretty = True, printSpace1 = True })
+          pgrmResults
+      FL.void $ FL.for bss P.$
+        \(Ur bs) -> L.fromSystemIO (BS.putStrLn bs)
 
       (obj6, obj7) <- copy obj6
 

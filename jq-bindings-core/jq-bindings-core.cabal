@@ -30,7 +30,6 @@ executable exe
 library
   exposed-modules:
     Jq
-  other-modules:
     Jq.Internal.Bindings
   build-depends:       base
                      , linear-base

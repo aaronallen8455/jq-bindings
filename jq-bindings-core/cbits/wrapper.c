@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include "jv.h"
+#include "jq.h"
 
 jv_kind jv_get_kind_w (jv* x) {
   return jv_get_kind(*x);
@@ -260,4 +261,20 @@ jv* jv_keys_w (jv* x) {
   jv* jvPtr = malloc(sizeof(jv));
   *jvPtr = jv_keys(*x);
   return jvPtr;
+}
+
+// JQ programs
+
+void jq_start_w (jq_state* jq, jv* x, int flags) {
+  jq_start(jq, *x, flags);
+}
+
+jv* jq_next_w (jq_state* jq) {
+  jv* ptr = malloc(sizeof(jv));
+  *ptr = jq_next(jq);
+  return ptr;
+}
+
+void jq_teardown_w (jq_state* jq) {
+  jq_teardown(&jq);
 }
