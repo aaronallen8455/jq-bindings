@@ -13,13 +13,12 @@ module Jq.Program
   , jq
   ) where
 
-import           Control.Applicative
+import           Control.Applicative (optional)
 import           Control.Monad
-import           Data.Attoparsec.ByteString.Char8
+import           Text.Parsec hiding (optional)
+import           Text.Read (readMaybe)
 import qualified Data.ByteString.Char8 as BS8
-import           Data.Coerce
 import           Data.Data
-import           Data.Monoid (Any(..))
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Quote
 
@@ -60,86 +59,88 @@ renderClosedProgram = \case
   AsArray p o -> "[" <> renderClosedProgram p <> "]" <> foldMap renderOpenProgram o
   Parens p o -> "(" <> renderClosedProgram p <> ")" <> foldMap renderOpenProgram o
 
+--------------------------------------------------------------------------------
+-- Parser
+--------------------------------------------------------------------------------
+
+type Parser = Parsec String ()
+
 parseProgram :: Parser ClosedProgram
 parseProgram =
-  parseClosed <* skipSpace <* endOfInput
+  parseClosed <* spaces <* eof
 
 parseClosed :: Parser ClosedProgram
 parseClosed = do
-  skipSpace
-  p <- choice [ parseParens
-              , parseAsArray
-              , parseDot
-              ]
-  choice
-    [ parsePipe p
-    , parseComma p
-    , pure p
-    ]
-
-parsePipe :: ClosedProgram -> Parser ClosedProgram
-parsePipe producer = do
-  void $ skipSpace *> char8 '|'
-  Pipe producer <$> parseClosed
-
-parseComma :: ClosedProgram -> Parser ClosedProgram
-parseComma p = do
-  void $ skipSpace *> char8 ','
-  Comma p <$> parseClosed
+  between spaces spaces (
+    choice [ parseParens
+           , parseAsArray
+           , parseDot
+           ]
+    )
+    `chainl1` (Comma <$ char ',')
+    `chainl1` (Pipe <$ char '|')
 
 parseDot :: Parser ClosedProgram
 parseDot = do
-  Just '.' <- peekChar
-  Dot <$> optional parseOpen
+  -- Use lookahead because AtKey also needs to parse '.'
+  void $ lookAhead (char '.')
+  fmap Dot
+      $ try (fmap Just parseOpen)
+    <|> (Nothing <$ char '.')
 
 parseAsArray :: Parser ClosedProgram
 parseAsArray = do
-  char8 '[' *> skipSpace
-  inside <- parseClosed
-  void $ skipSpace *> char8 ']'
-  Parens inside <$> optional parseOpen
+  inside <-
+    between (char '[' *> spaces)
+            (spaces <* char ']')
+            parseClosed
+  AsArray inside <$> optional parseOpen
 
 parseParens :: Parser ClosedProgram
 parseParens = do
-  char8 '(' *> skipSpace
-  inside <- parseClosed
-  void $ skipSpace *> char8 ')'
+  inside <-
+    between (char '(' *> spaces)
+            (spaces <* char ')')
+            parseClosed
   Parens inside <$> optional parseOpen
 
 parseOpen :: Parser OpenProgram
-parseOpen =
-  choice
-    [ parseAtKey
-    , parseAtIndex
-    , parseExplodeArray
-    ]
+parseOpen = do
+  c <- choice
+        [ parseAtKey
+        , parseExplodeArray
+        , parseAtIndex
+        ]
+  c <$> optional parseOpen
 
-parseAtKey :: Parser OpenProgram
+parseAtKey :: Parser (Maybe OpenProgram -> OpenProgram)
 parseAtKey = do
-  key <- char8 '.' *> parseKey
-  AtKey key <$> optional parseOpen
+  key <- char '.' *> parseKey
+  pure $ AtKey key
 
-parseAtIndex :: Parser OpenProgram
-parseAtIndex = do
-  idx <- char8 '[' *> (parseIdx <* char8 ']')
-  AtIdx idx <$> optional parseOpen
-
-parseExplodeArray :: Parser OpenProgram
+parseExplodeArray :: Parser (Maybe OpenProgram -> OpenProgram)
 parseExplodeArray = do
-  void $ string "[]"
-  ExplodeArray <$> optional parseOpen
+  void . try $ string "[]" -- use try b/c AtIndex also matches [
+  pure ExplodeArray
 
--- TODO this is probably not industrial grade
+parseAtIndex :: Parser (Maybe OpenProgram -> OpenProgram)
+parseAtIndex = do
+  idx <- between (char '[') (char ']') parseIdx
+  pure $ AtIdx idx
+
+-- TODO this is a bit hacky
 parseKey :: Parser BS8.ByteString
-parseKey =
-  takeTill . coerce
-    $ foldMap (Any .) [isSpace, (`elem` '.':",|[](){}")]
+parseKey = do
+  k <- BS8.pack <$> many1 (noneOf ".,|[](){} ")
+  guard (not $ BS8.null k) <?> "non-empty key"
+  pure k
 
 parseIdx :: Parser Int
 parseIdx = do
-  (idx, frac) <- properFraction <$> scientific
-  guard (frac == 0) <?> "Expected an integer for array index"
-  pure $ fromInteger idx
+  n <- maybe id (const negate)
+       <$> optional (char '-')
+  Just idx <- readMaybe <$> many1 digit
+  pure . n $ fromInteger idx
 
 --------------------------------------------------------------------------------
 -- QuasiQuoter
@@ -147,15 +148,26 @@ parseIdx = do
 
 jq :: QuasiQuoter
 jq = QuasiQuoter
-  { quoteExp = \inp ->
-      case parseOnly parseProgram (BS8.pack inp) of
-        Left err -> fail err
-        Right pgrm ->
-          dataToExpQ (const Nothing `extQ` handleBS) pgrm
+  { quoteExp = parseExp
   , quotePat = const $ fail "Cannot be used here"
   , quoteType = const $ fail "Cannot be used here"
   , quoteDec = const $ fail "Cannot be used here"
   }
+
+parseExp :: String -> Q Exp
+parseExp inp = do
+  Loc {loc_filename = file, loc_start = (line,col)} <- location
+
+  let p = do
+        pos <- getPosition
+        setPosition $
+          setSourceName (setSourceLine (setSourceColumn pos col) line) file
+        parseProgram
+
+  case runParser p () "" inp of
+    Left err -> fail $ show err
+    Right pgrm ->
+      dataToExpQ (const Nothing `extQ` handleBS) pgrm
 
 -- | The Data instance of ByteString doesn't play well with QQ for some reason,
 -- so we have to manually convert it.
