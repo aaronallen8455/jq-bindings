@@ -1,3 +1,4 @@
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -90,7 +91,7 @@ main = L.withLinearIO P.$ L.do
       L.fromSystemIO $ BS.putStrLn bs
 
       (obj6, obj) <- copy obj6
-      pgrmResults <- execProgram ".bar.key" obj
+      pgrmResults <- execProgram [jq|(.key[2] | .), . | .|] obj
 
       (bss :: [Ur BS.ByteString]) <-
         FL.traverse (flip render defPrintOpts { printPretty = True, printSpace1 = True })

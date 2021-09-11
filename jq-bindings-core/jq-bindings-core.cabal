@@ -31,9 +31,12 @@ library
   exposed-modules:
     Jq
     Jq.Internal.Bindings
+    Jq.Program
   build-depends:       base
                      , linear-base
                      , bytestring
+                     , template-haskell
+                     , attoparsec
   default-language:    Haskell2010
   extra-libraries: jq
   c-sources: cbits/wrapper.c

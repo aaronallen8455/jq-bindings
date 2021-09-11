@@ -20,6 +20,8 @@ module Jq
   , Path
   , PathComponent(..)
   , PrintOpts(..)
+  , OpenProgram(..)
+  , ClosedProgram(..)
   , SomeTypedJv(..)
   , TypedJv
   , array
@@ -36,11 +38,13 @@ module Jq
   , defPrintOpts
   , equal
   , execProgram
+  , execProgramUnsafe
   , free
   , getKind
   , getPath
   , identical
   , isInteger
+  , jq
   , nullJv
   , number
   , numberValue
@@ -79,6 +83,7 @@ import           Prelude.Linear
 import qualified Unsafe.Linear as UL
 
 import           Jq.Internal.Bindings
+import           Jq.Program (ClosedProgram(..), OpenProgram(..), jq, renderClosedProgram)
 
 --------------------------------------------------------------------------------
 -- Typed Jvs
@@ -542,13 +547,18 @@ setPath = UL.toLinear $ \jv path -> UL.toLinear $ \val -> L.liftSystemIO P.$ do
   typeJv' (forgetType jv)
 
 --------------------------------------------------------------------------------
--- Program
+-- Program Execution
 --------------------------------------------------------------------------------
 
 execProgram
   :: (HasJv val, L.MonadIO m)
+  => ClosedProgram -> val %1 -> m [SomeTypedJv]
+execProgram = execProgramUnsafe P.. renderClosedProgram
+
+execProgramUnsafe
+  :: (HasJv val, L.MonadIO m)
   => BS.ByteString -> val %1 -> m [SomeTypedJv]
-execProgram pgrm = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
+execProgramUnsafe pgrm = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
   jq <- jqInit
   didCompile <- BS.useAsCString pgrm P.$ jqCompile jq
   case didCompile of
