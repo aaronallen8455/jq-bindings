@@ -23,15 +23,24 @@ int jv_get_refcnt_w (jv* x) {
 }
 
 int jv_equal_w (jv* jv1, jv* jv2) {
-  return jv_equal(*jv1, *jv2);
+  int r = jv_equal(*jv1, *jv2);
+  free(jv1);
+  free(jv2);
+  return r;
 }
 
 int jv_identical_w (jv* a, jv* b) {
-  return jv_identical(*a, *b);
+  int r = jv_identical(*a, *b);
+  free(a);
+  free(b);
+  return r;
 }
 
 int jv_contains_w (jv* a, jv* b) {
-  return jv_contains(*a, *b);
+  int r = jv_contains(*a, *b);
+  free(a);
+  free(b);
+  return r;
 }
 
 jv* jv_invalid_w (void) {
@@ -40,38 +49,16 @@ jv* jv_invalid_w (void) {
   return ptr;
 }
 
-jv* jv_invalid_with_msg_w (jv* x) {
-  jv *ptr = malloc(sizeof *ptr);
-  *ptr = jv_invalid_with_msg(*x);
-  return ptr;
-}
-
 jv* jv_invalid_get_msg_w (jv* x) {
   jv *ptr = malloc(sizeof *ptr);
   *ptr = jv_invalid_get_msg(*x);
+  free(x);
   return ptr;
 }
-
-int jv_invalid_has_msg_w (jv* x) {
-  return jv_invalid_has_msg(*x);
-}
-
 
 jv* jv_null_w (void) {
   jv *ptr = malloc(sizeof *ptr);
   *ptr = jv_null();
-  return ptr;
-}
-
-jv* jv_true_w (void) {
-  jv *ptr = malloc(sizeof *ptr);
-  *ptr = jv_true();
-  return ptr;
-}
-
-jv* jv_false_w (void) {
-  jv *ptr = malloc(sizeof *ptr);
-  *ptr = jv_false();
   return ptr;
 }
 
@@ -108,7 +95,9 @@ jv* jv_array_sized_w(int s) {
 }
 
 int jv_array_length_w (jv* x) {
-  return jv_array_length(*x);
+  int r = jv_array_length(*x);
+  free(x);
+  return r;
 }
 
 jv* jv_array_get_w (jv* j, int i) {
@@ -119,48 +108,51 @@ jv* jv_array_get_w (jv* j, int i) {
 
 void jv_array_set_w (jv* j, int i, jv* e) {
   *j = jv_array_set(*j, i, *e);
+  free(e);
 }
 
 void jv_array_append_w(jv* arr, jv* val) {
   *arr = jv_array_append(*arr, *val);
+  free(val);
 }
 
 void jv_array_concat_w(jv* a, jv* b) {
   *a = jv_array_concat(*a, *b);
+  free(b);
 }
 
 jv* jv_array_slice_w (jv* arr, int start, int end) {
   jv *ptr = malloc(sizeof *ptr);
   *ptr = jv_array_slice(*arr, start, end);
+  free(arr);
   return ptr;
 }
 
 jv* jv_array_indexes_w (jv* a, jv* b) {
   jv *ptr = malloc(sizeof *ptr);
   *ptr = jv_array_indexes(*a, *b);
+  free(a);
+  free(b);
   return ptr;
 }
 
 jv* jv_string_w (const char* str) {
   jv *jvPtr = malloc(sizeof *jvPtr);
-  jv result = jv_string(str);
-  *jvPtr = result;
+  *jvPtr = jv_string(str);
   return jvPtr;
 }
 
-// jv jv_string_sized(const char*, int);
-
-// jv jv_string_empty(int len);
-
 int jv_string_length_bytes_w(jv* x) {
-  return jv_string_length_bytes(*x);
+  int r = jv_string_length_bytes(*x);
+  free(x);
+  return r;
 }
 
 int jv_string_length_codepoints_w(jv* x) {
-  return jv_string_length_codepoints(*x);
+  int r = jv_string_length_codepoints(*x);
+  free(x);
+  return r;
 }
-
-// unsigned long jv_string_hash(jv);
 
 const char* jv_string_value_w (jv* x) {
   return jv_string_value(*x);
@@ -169,23 +161,22 @@ const char* jv_string_value_w (jv* x) {
 jv* jv_string_indexes_w(jv* j, jv* k) {
   jv *ptr = malloc(sizeof(*ptr));
   *ptr = jv_string_indexes(*j, *k);
+  free(j);
+  free(k);
   return ptr;
 }
 
 jv* jv_string_slice_w(jv* j, int start, int end) {
   jv *ptr = malloc(sizeof(*ptr));
   *ptr = jv_string_slice(*j, start, end);
+  free(j);
   return ptr;
 }
 
 void jv_string_concat_w(jv* j, jv* k) {
   *j = jv_string_concat(*j, *k);
+  free(k);
 }
-
-//jv jv_string_vfmt(const char*, va_list) JV_VPRINTF_LIKE(1);
-//jv jv_string_fmt(const char*, ...) JV_PRINTF_LIKE(1, 2);
-//jv jv_string_append_codepoint(jv a, uint32_t c);
-//jv jv_string_append_buf(jv a, const char* buf, int len);
 
 void jv_string_append_str_w(jv* a, const char* str) {
   *a = jv_string_append_str(*a, str);
@@ -194,6 +185,8 @@ void jv_string_append_str_w(jv* a, const char* str) {
 jv* jv_string_split_w(jv* j, jv* sep) {
   jv *ptr = malloc(sizeof(*ptr));
   *ptr = jv_string_split(*j, *sep);
+  free(j);
+  free(sep);
   return ptr;
 }
 
@@ -209,39 +202,54 @@ jv* jv_object_w() {
 jv* jv_object_get_w(jv* object, jv* key) {
   jv *ptr = malloc(sizeof(*ptr));
   *ptr = jv_object_get(*object, *key);
+  free(object);
+  free(key);
   return ptr;
 }
 
 int jv_object_has_w(jv* object, jv* key) {
-  return jv_object_has(*object, *key);
+  int r = jv_object_has(*object, *key);
+  free(object);
+  free(key);
+  return r;
 }
 
 void jv_object_set_w(jv* object, jv* key, jv* value) {
   *object = jv_object_set(*object, *key, *value);
+  free(key);
+  free(value);
 }
 
 void jv_object_delete_w(jv* object, jv* key) {
   *object = jv_object_delete(*object, *key);
+  free(key);
 }
 
 int jv_object_length_w(jv* object) {
-  return jv_object_length(*object);
+  int r = jv_object_length(*object);
+  free(object);
+  return r;
 }
 
 void jv_object_merge_w(jv* a, jv* b) {
   *a = jv_object_merge(*a, *b);
+  free(b);
 }
 
 void jv_object_merge_recursive_w(jv* a, jv* b) {
   *a = jv_object_merge_recursive(*a, *b);
+  free(b);
 }
 
 void jv_setpath_w (jv* x, jv* path, jv* v) {
   *x = jv_setpath(*x, *path, *v);
+  free(path);
+  free(v);
 }
 
 void jv_getpath_w(jv* x, jv* path) {
   *x = jv_getpath(*x, *path);
+  free(path);
 }
 
 jv* jv_parse_w (const char* str) {
@@ -254,12 +262,14 @@ jv* jv_parse_w (const char* str) {
 jv* jv_dump_string_w (jv* x, int opts) {
   jv* jvPtr = malloc(sizeof(jv));
   *jvPtr = jv_dump_string(*x, opts);
+  free(x);
   return jvPtr;
 }
 
 jv* jv_keys_w (jv* x) {
   jv* jvPtr = malloc(sizeof(jv));
   *jvPtr = jv_keys(*x);
+  free(x);
   return jvPtr;
 }
 
@@ -267,6 +277,7 @@ jv* jv_keys_w (jv* x) {
 
 void jq_start_w (jq_state* jq, jv* x, int flags) {
   jq_start(jq, *x, flags);
+  free(x);
 }
 
 jv* jq_next_w (jq_state* jq) {

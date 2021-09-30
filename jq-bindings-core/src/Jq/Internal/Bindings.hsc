@@ -74,23 +74,11 @@ foreign import ccall unsafe "wrapper.c jv_contains_w"
 foreign import ccall unsafe "wrapper.c jv_invalid_w"
   jvInvalid :: IO Jv
 
-foreign import ccall unsafe "wrapper.c jv_invalid_with_msg_w"
-  jvInvalidWithMsg :: Jv -> IO Jv
-
 foreign import ccall unsafe "wrapper.c jv_invalid_get_msg_w"
   jvInvalidGetMsg :: Jv -> IO Jv
 
-foreign import ccall unsafe "wrapper.c jv_invalid_has_msg_w"
-  jvInvalidHasMsg :: Jv -> IO CInt
-
 foreign import ccall unsafe "wrapper.c jv_null_w"
   jvNull :: IO Jv
-
-foreign import ccall unsafe "wrapper.c jv_true_w"
-  jvTrue :: IO Jv
-
-foreign import ccall unsafe "wrapper.c jv_false_w"
-  jvFalse :: IO Jv
 
 foreign import ccall unsafe "wrapper.c jv_bool_w"
   jvBool :: CInt -> IO Jv
@@ -160,6 +148,9 @@ foreign import ccall unsafe "wrapper.c jv_object_w"
 
 foreign import ccall unsafe "wrapper.c jv_object_get_w"
   jvObjectGet :: Jv -> Jv -> IO Jv
+
+foreign import ccall unsafe "wrapper.c jv_object_has_w"
+  jvObjectHas :: Jv -> Jv -> IO CInt
 
 foreign import ccall unsafe "wrapper.c jv_object_set_w"
   jvObjectSet :: Jv -> Jv -> Jv -> IO ()

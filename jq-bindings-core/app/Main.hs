@@ -49,6 +49,11 @@ main = L.withLinearIO P.$ L.do
       L.fromSystemIO $ BS.putStrLn "Wrong type!"
     Right (Just x) -> L.do
       (x, x') <- copy x
+      (x, x'') <- copy x
+      Ur b <- equal x' x''
+      L.fromSystemIO $ print b
+
+      (x, x') <- copy x
       str <- string "hello?"
       b <- bool False
       arr <- array [forgetType str, forgetType x, forgetType b]
@@ -91,7 +96,8 @@ main = L.withLinearIO P.$ L.do
       L.fromSystemIO $ BS.putStrLn bs
 
       (obj6, obj) <- copy obj6
-      pgrmResults <- execProgram [jq|(.key[2] | .), . | .|] obj
+      --pgrmResults <- execProgramUnsafe "..[ \"test\"  ].foo.zoo[   1 , 3 ]" obj
+      pgrmResults <- execProgram [jq|..["test"] | .|] obj
 
       (bss :: [Ur BS.ByteString]) <-
         FL.traverse (flip render defPrintOpts { printPretty = True, printSpace1 = True })

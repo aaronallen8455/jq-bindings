@@ -13,31 +13,39 @@ module Jq.Program
   , jq
   ) where
 
-import           Control.Applicative (optional)
+import           Control.Applicative (empty, optional)
 import           Control.Monad
-import           Text.Parsec hiding (optional)
-import           Text.Read (readMaybe)
+import           Data.Bool (bool)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.Data
+import qualified Data.List.NonEmpty as NE
 import           Language.Haskell.TH
 import           Language.Haskell.TH.Quote
+import           Text.Parsec hiding (optional)
+import           Text.Read (readMaybe)
 
 -- | AST for expressions that can be further extended with additional key
 -- queries, etc.
 data OpenProgram
-  = AtKey BS8.ByteString (Maybe OpenProgram)
-  | AtIdx Int (Maybe OpenProgram)
-  | ExplodeArray (Maybe OpenProgram)
+  = AtKeys (NE.NonEmpty BS8.ByteString) (Maybe OpenProgram)
+  | AtIndices (NE.NonEmpty Int) (Maybe OpenProgram)
+  | Iterator (Maybe OpenProgram)
+    -- ^ return all elements of an array or values of an object
   deriving (Show, Eq, Data)
+
+-- TODO array/string slice
+-- TODO object construction
 
 -- | AST for "top level" programs that cannot be extended with field accessors
 -- or array indices.
 data ClosedProgram
-  = Dot (Maybe OpenProgram)
+  = Identity (Maybe OpenProgram)
   | Pipe ClosedProgram ClosedProgram
   | Comma ClosedProgram ClosedProgram
   | AsArray ClosedProgram (Maybe OpenProgram)
   | Parens ClosedProgram (Maybe OpenProgram)
+  | RecursiveDescent (Maybe OpenProgram)
+  -- This can have certain accessors, but not regular key accessors
   deriving (Show, Eq, Data)
 
 -- This is not a complete embedding of the jq language. The AST does not
@@ -45,19 +53,26 @@ data ClosedProgram
 
 renderOpenProgram :: OpenProgram -> BS8.ByteString
 renderOpenProgram = \case
-  AtKey k p -> "." <> k <> foldMap renderOpenProgram p
-  AtIdx i p -> "[" <> BS8.pack (show i) <> "]" <> foldMap renderOpenProgram p
-  ExplodeArray p -> "[]" <> foldMap renderOpenProgram p
+  AtKeys keys p ->
+    let renderKey k = "\"" <> k <> "\""
+        keyBs = map renderKey $ NE.toList keys
+     in "[" <> BS8.intercalate "," keyBs <> "]"
+        <> foldMap renderOpenProgram p
+  AtIndices idxs p ->
+    let renderIdx = BS8.pack . show
+        idxBs = map renderIdx $ NE.toList idxs
+     in "[" <> BS8.intercalate "," idxBs <> "]" <> foldMap renderOpenProgram p
+  Iterator p -> "[]" <> foldMap renderOpenProgram p
 
 -- | Produce a 'ByteString' that can be fed to jq as a valid program
 renderClosedProgram :: ClosedProgram -> BS8.ByteString
 renderClosedProgram = \case
-  Dot (Just p@AtKey{}) -> renderOpenProgram p
-  Dot p -> "." <> foldMap renderOpenProgram p
+  Identity p -> "." <> foldMap renderOpenProgram p
   Pipe a b -> renderClosedProgram a <> " | " <> renderClosedProgram b
   Comma a b -> renderClosedProgram a <> ", " <> renderClosedProgram b
   AsArray p o -> "[" <> renderClosedProgram p <> "]" <> foldMap renderOpenProgram o
   Parens p o -> "(" <> renderClosedProgram p <> ")" <> foldMap renderOpenProgram o
+  RecursiveDescent p -> ".." <> foldMap renderOpenProgram p
 
 --------------------------------------------------------------------------------
 -- Parser
@@ -74,19 +89,22 @@ parseClosed = do
   between spaces spaces (
     choice [ parseParens
            , parseAsArray
-           , parseDot
+           , parseRecursiveDescent
+           , parseIdentity
            ]
     )
     `chainl1` (Comma <$ char ',')
     `chainl1` (Pipe <$ char '|')
 
-parseDot :: Parser ClosedProgram
-parseDot = do
-  -- Use lookahead because AtKey also needs to parse '.'
-  void $ lookAhead (char '.')
-  fmap Dot
-      $ try (fmap Just parseOpen)
-    <|> (Nothing <$ char '.')
+parseIdentity :: Parser ClosedProgram
+parseIdentity = do
+  void $ char '.'
+  Identity <$> try (optional (parseOpen True True))
+
+parseRecursiveDescent :: Parser ClosedProgram
+parseRecursiveDescent = do
+  void $ try (string "..")
+  RecursiveDescent <$> optional (parseOpen False False)
 
 parseAsArray :: Parser ClosedProgram
 parseAsArray = do
@@ -94,7 +112,7 @@ parseAsArray = do
     between (char '[' *> spaces)
             (spaces <* char ']')
             parseClosed
-  AsArray inside <$> optional parseOpen
+  AsArray inside <$> optional (parseOpen False True)
 
 parseParens :: Parser ClosedProgram
 parseParens = do
@@ -102,36 +120,51 @@ parseParens = do
     between (char '(' *> spaces)
             (spaces <* char ')')
             parseClosed
-  Parens inside <$> optional parseOpen
+  Parens inside <$> optional (parseOpen False True)
 
-parseOpen :: Parser OpenProgram
-parseOpen = do
+parseOpen :: Bool -> Bool -> Parser OpenProgram
+parseOpen isFirst allowAtKey = do
+  let openBracketStart =
+        choice
+          [ parseAtKeys
+          , parseIterator
+          , parseAtIndices
+          ]
   c <- choice
-        [ parseAtKey
-        , parseExplodeArray
-        , parseAtIndex
-        ]
-  c <$> optional parseOpen
+         [ bool empty (parseAtKey isFirst) allowAtKey
+         , char '[' *> spaces *> openBracketStart
+         ]
+  c <$> optional (parseOpen False True)
 
-parseAtKey :: Parser (Maybe OpenProgram -> OpenProgram)
-parseAtKey = do
-  key <- char '.' *> parseKey
-  pure $ AtKey key
+parseAtKey :: Bool -> Parser (Maybe OpenProgram -> OpenProgram)
+parseAtKey isFirst = do
+  -- consume the period if this is the first in a sequence. This is to account
+  -- for the Identity also introducing the '.' character
+  key <- bool try id isFirst
+       $ char '.' *> parseKey
+  pure $ AtKeys (pure key)
 
-parseExplodeArray :: Parser (Maybe OpenProgram -> OpenProgram)
-parseExplodeArray = do
-  void . try $ string "[]" -- use try b/c AtIndex also matches [
-  pure ExplodeArray
+parseAtKeys :: Parser (Maybe OpenProgram -> OpenProgram)
+parseAtKeys = do
+  keys <- sepBy1 (between (char '"') (char '"' *> spaces) parseKey)
+                 (char ',' *> spaces)
+  void $ char ']'
+  Just ks <- pure $ NE.nonEmpty keys
+  pure $ AtKeys ks
 
-parseAtIndex :: Parser (Maybe OpenProgram -> OpenProgram)
-parseAtIndex = do
-  idx <- between (char '[') (char ']') parseIdx
-  pure $ AtIdx idx
+parseIterator :: Parser (Maybe OpenProgram -> OpenProgram)
+parseIterator = Iterator <$ char ']'
+
+parseAtIndices :: Parser (Maybe OpenProgram -> OpenProgram)
+parseAtIndices = do
+  Just idxs <- NE.nonEmpty <$> sepBy1 parseIdx (char ',' *> spaces)
+  void $ char ']'
+  pure $ AtIndices idxs
 
 -- TODO this is a bit hacky
 parseKey :: Parser BS8.ByteString
 parseKey = do
-  k <- BS8.pack <$> many1 (noneOf ".,|[](){} ")
+  k <- BS8.pack <$> many1 (noneOf ".,|[](){} \"")
   guard (not $ BS8.null k) <?> "non-empty key"
   pure k
 

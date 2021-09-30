@@ -51,6 +51,7 @@ module Jq
   , object
   , objectDelete
   , objectGet
+  , objectHas
   , objectKeys
   , objectLength
   , objectMerge
@@ -141,9 +142,18 @@ typeJv = UL.toLinear $ \jv -> L.liftSystemIO P.$ typeJv' jv
 
 typeJv' :: Jv -> P.IO (Maybe SomeTypedJv)
 typeJv' jv = do
+  mSomeJv <- typeJv'' jv
+  case mSomeJv of
+    Nothing -> jvFree jv -- free if invalid
+    Just _ -> P.pure ()
+  P.pure mSomeJv
+
+-- Doesn't free if invalid so you can get the message out
+typeJv'' :: Jv -> P.IO (Maybe SomeTypedJv)
+typeJv'' jv = do
   k <- toEnum P.. P.fromIntegral P.<$> jvGetKind jv
   case k of
-    InvalidKind -> Nothing P.<$ jvFree jv
+    InvalidKind -> P.pure Nothing
     NullKind    -> P.pure P.. Just P.$ MkSomeTypedJv NullS (TypedJv jv)
     FalseKind   -> P.pure P.. Just P.$ MkSomeTypedJv FalseS (TypedJv jv)
     TrueKind    -> P.pure P.. Just P.$ MkSomeTypedJv TrueS (TypedJv jv)
@@ -216,13 +226,12 @@ parseTyped str =
 
 validate :: Jv -> IO (Either (Ur BS.ByteString) SomeTypedJv)
 validate jv = do
-  mTjv <- typeJv' jv
+  mTjv <- typeJv'' jv
   -- check if it's valid
   case mTjv of
     Just tjv -> P.pure (Right tjv)
-    Nothing -> do -- invalid
+    Nothing -> do
       msg <- jvInvalidGetMsg jv
-      jvFree jv
       msgK <- jvGetKind msg
       -- check if there's an error message
       if msgK P.== jvKindNull
@@ -231,8 +240,8 @@ validate jv = do
            P.pure (Left $ Ur "Invalid JSON")
          else do
            cStr <- jvStringValue msg
-           jvFree msg
            bs <- BS.packCString cStr
+           jvFree msg
            P.pure (Left $ Ur bs)
 
 --------------------------------------------------------------------------------
@@ -338,9 +347,10 @@ numberValue = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
   CDouble dbl <- jvNumberValue (forgetType jv)
   P.pure (jv, Ur dbl)
 
-isInteger :: L.MonadIO m => TypedJv 'NumberKind %1 -> m (Ur Bool)
-isInteger = UL.toLinear $ \jv -> L.liftSystemIOU P.$
-  toEnum P.. P.fromIntegral P.<$> jvIsInteger (forgetType jv)
+isInteger :: L.MonadIO m => TypedJv 'NumberKind %1 -> m (TypedJv 'NumberKind, Ur Bool)
+isInteger = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
+  b <- toEnum P.. P.fromIntegral P.<$> jvIsInteger (forgetType jv)
+  P.pure (jv, Ur b)
 
 array :: (L.MonadIO m, HasJv jv) => [jv] %1 -> m (TypedJv 'ArrayKind)
 array = UL.toLinear $ \es -> L.liftSystemIO (array' es)
@@ -440,6 +450,15 @@ objectGet :: L.MonadIO m
 objectGet = UL.toLinear $ \obj key -> L.liftSystemIO P.$ do
   jvKey <- BS.useAsCString key jvString
   typeJv' P.=<< jvObjectGet (forgetType obj) jvKey
+
+objectHas :: L.MonadIO m
+          => TypedJv 'ObjectKind %1
+          -> TypedJv 'StringKind %1
+          -> m (Ur Bool)
+objectHas = UL.toLinear $ \obj ->
+            UL.toLinear $ \key -> L.liftSystemIOU P.$ do
+  P.toEnum P.. P.fromIntegral
+    P.<$> jvObjectHas (forgetType obj) (forgetType key)
 
 objectSet :: (HasJv value, L.MonadIO m)
           => TypedJv 'ObjectKind %1
