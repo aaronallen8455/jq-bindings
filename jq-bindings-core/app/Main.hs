@@ -96,8 +96,8 @@ main = L.withLinearIO P.$ L.do
       L.fromSystemIO $ BS.putStrLn bs
 
       (obj6, obj) <- copy obj6
-      --pgrmResults <- execProgramUnsafe "..[ \"test\"  ].foo.zoo[   1 , 3 ]" obj
-      pgrmResults <- execProgram [jq|..["test"] | .|] obj
+      --pgrmResults <- execProgramUnsafe ".bar | .bar , .key" obj
+      pgrmResults <- execProgram [jq|.bar | .bar , .key |] obj
 
       (bss :: [Ur BS.ByteString]) <-
         FL.traverse (flip render defPrintOpts { printPretty = True, printSpace1 = True })

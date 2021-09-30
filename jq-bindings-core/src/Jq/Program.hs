@@ -45,6 +45,7 @@ data ClosedProgram
   | AsArray ClosedProgram (Maybe OpenProgram)
   | Parens ClosedProgram (Maybe OpenProgram)
   | RecursiveDescent (Maybe OpenProgram)
+  | Object [(BS8.ByteString, ClosedProgram)]
   -- This can have certain accessors, but not regular key accessors
   deriving (Show, Eq, Data)
 
@@ -73,6 +74,8 @@ renderClosedProgram = \case
   AsArray p o -> "[" <> renderClosedProgram p <> "]" <> foldMap renderOpenProgram o
   Parens p o -> "(" <> renderClosedProgram p <> ")" <> foldMap renderOpenProgram o
   RecursiveDescent p -> ".." <> foldMap renderOpenProgram p
+  Object obj -> "{" <> BS8.intercalate "," (renderPairs <$> obj) <> "}"
+    where renderPairs (key, p) = "\"" <> key <> "\":" <> renderClosedProgram p
 
 --------------------------------------------------------------------------------
 -- Parser
@@ -86,15 +89,18 @@ parseProgram =
 
 parseClosed :: Parser ClosedProgram
 parseClosed = do
-  between spaces spaces (
-    choice [ parseParens
-           , parseAsArray
-           , parseRecursiveDescent
-           , parseIdentity
-           ]
-    )
+  between spaces spaces parseClosedInner
     `chainl1` (Comma <$ char ',')
     `chainl1` (Pipe <$ char '|')
+
+parseClosedInner :: Parser ClosedProgram
+parseClosedInner =
+  choice [ parseParens
+         , parseAsArray
+         , parseRecursiveDescent
+         , parseIdentity
+         , parseObject
+         ]
 
 parseIdentity :: Parser ClosedProgram
 parseIdentity = do
@@ -122,6 +128,27 @@ parseParens = do
             parseClosed
   Parens inside <$> optional (parseOpen False True)
 
+parseObject :: Parser ClosedProgram
+parseObject = do
+  let parseKeys = do
+        mQStart <- optional (char '"')
+        key <- parseKey
+        mQEnd <- optional (char '"')
+        guard (mQStart == mQEnd) <?> "object key quotes"
+        spaces
+        _ <- char ':'
+        spaces
+        pgrm <- (parseClosedInner <* spaces)
+                  `chainl1` (Pipe <$ (char '|' <* spaces))
+        pure (key, pgrm)
+
+  pairs <-
+    between (char '{' *> spaces)
+            (char '}' *> spaces)
+            (sepBy1 parseKeys (char ',' *> spaces))
+
+  pure $ Object pairs
+
 parseOpen :: Bool -> Bool -> Parser OpenProgram
 parseOpen isFirst allowAtKey = do
   let openBracketStart =
@@ -140,9 +167,9 @@ parseAtKey :: Bool -> Parser (Maybe OpenProgram -> OpenProgram)
 parseAtKey isFirst = do
   -- consume the period if this is the first in a sequence. This is to account
   -- for the Identity also introducing the '.' character
-  key <- bool try id isFirst
-       $ char '.' *> parseKey
-  pure $ AtKeys (pure key)
+  unless isFirst $
+    void (char '.')
+  AtKeys . pure <$> parseKey
 
 parseAtKeys :: Parser (Maybe OpenProgram -> OpenProgram)
 parseAtKeys = do
@@ -164,7 +191,7 @@ parseAtIndices = do
 -- TODO this is a bit hacky
 parseKey :: Parser BS8.ByteString
 parseKey = do
-  k <- BS8.pack <$> many1 (noneOf ".,|[](){} \"")
+  k <- BS8.pack <$> many1 (noneOf ".,|[](){} \":")
   guard (not $ BS8.null k) <?> "non-empty key"
   pure k
 
