@@ -16,12 +16,14 @@ module Jq.Decode
   , nullable
   , requiredKey
   , nullableKey
+  , optionalKey
   , optionalNullableKey
   , array
   ) where
 
+import           Control.Applicative (Alternative(..))
 import qualified Control.Functor.Linear as FL
-import           Control.Monad (join)
+import           Control.Monad (ap, join)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Text as T
@@ -42,6 +44,39 @@ newtype Decoder a =
 instance Functor Decoder where
   fmap f decoder = MkDecoder $ \jv ->
     FL.fmap (\(L.Ur x) -> L.Ur (fmap f x)) (runDecoder decoder jv)
+
+instance Applicative Decoder where
+  pure x = MkDecoder $ \jv -> FL.do
+    Jq.free jv
+    FL.pure (L.Ur (Right x))
+  (<*>) = ap
+
+instance Monad Decoder where
+  ma >>= amb = MkDecoder $ \jv -> FL.do
+    (jv, jv2) <- Jq.copy jv
+    runDecoder ma jv2 FL.>>= \case
+      L.Ur (Left err) -> FL.do
+        Jq.free jv
+        FL.pure (L.Ur (Left err))
+      L.Ur (Right a) -> FL.do
+        runDecoder (amb a) jv
+
+instance Alternative Decoder where
+  empty = MkDecoder $ \jv -> FL.do
+    Jq.free jv
+    FL.pure (L.Ur $ Left "empty")
+  ma <|> mb = MkDecoder $ \jv -> FL.do
+    (jv, jv2) <- Jq.copy jv
+    runDecoder ma jv2 FL.>>= \case
+      L.Ur (Left err) -> FL.do
+        runDecoder mb jv
+      L.Ur (Right a) -> FL.do
+        Jq.free jv
+        FL.pure (L.Ur $ Right a)
+
+--------------------------------------------------------------------------------
+-- Primitive Decoders
+--------------------------------------------------------------------------------
 
 int :: Decoder Int
 int = MkDecoder $ \jv ->
