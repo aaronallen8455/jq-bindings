@@ -259,6 +259,12 @@ jv* jv_parse_w (const char* str) {
   return jvPtr;
 }
 
+jv* jv_load_file_w (const char* file, int raw) {
+  jv *jvPtr = malloc(sizeof *jvPtr);
+  *jvPtr = jv_load_file(file, raw);
+  return jvPtr;
+}
+
 jv* jv_dump_string_w (jv* x, int opts) {
   jv* jvPtr = malloc(sizeof(jv));
   *jvPtr = jv_dump_string(*x, opts);

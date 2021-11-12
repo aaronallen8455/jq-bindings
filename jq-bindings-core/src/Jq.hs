@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -17,6 +18,7 @@ module Jq
   , Jv
   , Kind(..)
   , KindSing(..)
+  , KnownKind(..)
   , Path
   , PathComponent(..)
   , PrintOpts(..)
@@ -27,12 +29,14 @@ module Jq
   , array
   , arrayAppend
   , arrayConcat
+  , arrayElems
   , arrayGet
   , arrayIndexes
   , arrayLength
   , arraySet
   , arraySlice
   , bool
+  , boolValue
   , cast
   , contains
   , defPrintOpts
@@ -45,6 +49,9 @@ module Jq
   , identical
   , isInteger
   , jq
+  , kindEq
+  , loadFile
+  , loadFileCast
   , nullJv
   , number
   , numberValue
@@ -58,22 +65,21 @@ module Jq
   , objectMergeRecursive
   , objectSet
   , parse
-  , parseMaybe
-  , parseTyped
   , render
   , setPath
   , string
   , stringIndexes
   , stringSlice
   , stringValue
-  , typeJv
   , withSomeTypedJv
   ) where
 
 import qualified Control.Functor.Linear as L
+import qualified Control.Monad as P
 import qualified Control.Monad.IO.Class.Linear as L
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Unsafe as BS
 import           Data.Foldable (for_)
 import           Data.String
 import           Data.Traversable (for)
@@ -93,8 +99,7 @@ import           Jq.Program (ClosedProgram(..), OpenProgram(..), jq, renderClose
 data Kind
   = InvalidKind
   | NullKind
-  | FalseKind
-  | TrueKind
+  | BoolKind
   | NumberKind
   | StringKind
   | ArrayKind
@@ -103,28 +108,39 @@ data Kind
 
 data KindSing (k :: Kind) where
   NullS   :: KindSing 'NullKind
-  FalseS  :: KindSing 'FalseKind
-  TrueS   :: KindSing 'TrueKind
+  BoolS   :: KindSing 'BoolKind
   NumberS :: KindSing 'NumberKind
   StringS :: KindSing 'StringKind
   ArrayS  :: KindSing 'ArrayKind
   ObjectS :: KindSing 'ObjectKind
 
-kindEq :: KindSing k1 -> KindSing k2 -> Maybe (k1 :~: k2)
-kindEq NullS NullS = Just Refl
-kindEq FalseS FalseS = Just Refl
-kindEq TrueS TrueS = Just Refl
-kindEq NumberS NumberS = Just Refl
-kindEq StringS StringS = Just Refl
-kindEq ArrayS ArrayS = Just Refl
-kindEq ObjectS ObjectS = Just Refl
-kindEq _ _ = Nothing
+kindSingLabel :: KindSing k -> BS.ByteString
+kindSingLabel = \case
+  NullS -> "null"
+  BoolS -> "bool"
+  NumberS -> "number"
+  StringS -> "string"
+  ArrayS -> "array"
+  ObjectS -> "object"
+
+kindEq :: KindSing k1 -> KindSing k2 -> Either BS.ByteString (k1 :~: k2)
+kindEq NullS NullS = Right Refl
+kindEq BoolS BoolS = Right Refl
+kindEq NumberS NumberS = Right Refl
+kindEq StringS StringS = Right Refl
+kindEq ArrayS ArrayS = Right Refl
+kindEq ObjectS ObjectS = Right Refl
+kindEq expected actual =
+  Left ("expected "
+   P.<> kindSingLabel expected
+   P.<> ", got "
+   P.<> kindSingLabel actual
+       )
 
 class KnownKind (k :: Kind) where
   kindSing :: KindSing k
 instance KnownKind 'NullKind where kindSing = NullS
-instance KnownKind 'FalseKind where kindSing = FalseS
-instance KnownKind 'TrueKind where kindSing = TrueS
+instance KnownKind 'BoolKind where kindSing = BoolS
 instance KnownKind 'NumberKind where kindSing = NumberS
 instance KnownKind 'StringKind where kindSing = StringS
 instance KnownKind 'ArrayKind where kindSing = ArrayS
@@ -134,45 +150,24 @@ type role TypedJv representational
 newtype TypedJv (k :: Kind) = TypedJv Jv
 
 data SomeTypedJv where
-  MkSomeTypedJv :: KindSing k -> TypedJv k %1 -> SomeTypedJv
-
--- | Returns nothing if invalid
-typeJv :: L.MonadIO m => Jv %1 -> m (Maybe SomeTypedJv)
-typeJv = UL.toLinear $ \jv -> L.liftSystemIO P.$ typeJv' jv
-
-typeJv' :: Jv -> P.IO (Maybe SomeTypedJv)
-typeJv' jv = do
-  mSomeJv <- typeJv'' jv
-  case mSomeJv of
-    Nothing -> jvFree jv -- free if invalid
-    Just _ -> P.pure ()
-  P.pure mSomeJv
-
--- Doesn't free if invalid so you can get the message out
-typeJv'' :: Jv -> P.IO (Maybe SomeTypedJv)
-typeJv'' jv = do
-  k <- toEnum P.. P.fromIntegral P.<$> jvGetKind jv
-  case k of
-    InvalidKind -> P.pure Nothing
-    NullKind    -> P.pure P.. Just P.$ MkSomeTypedJv NullS (TypedJv jv)
-    FalseKind   -> P.pure P.. Just P.$ MkSomeTypedJv FalseS (TypedJv jv)
-    TrueKind    -> P.pure P.. Just P.$ MkSomeTypedJv TrueS (TypedJv jv)
-    NumberKind  -> P.pure P.. Just P.$ MkSomeTypedJv NumberS (TypedJv jv)
-    StringKind  -> P.pure P.. Just P.$ MkSomeTypedJv StringS (TypedJv jv)
-    ArrayKind   -> P.pure P.. Just P.$ MkSomeTypedJv ArrayS (TypedJv jv)
-    ObjectKind  -> P.pure P.. Just P.$ MkSomeTypedJv ObjectS (TypedJv jv)
+  MkSomeTypedJv :: KnownKind k => TypedJv k %1 -> SomeTypedJv
 
 withSomeTypedJv :: SomeTypedJv %1 -> (forall k. TypedJv k %1 -> KindSing k -> a) -> a
-withSomeTypedJv (MkSomeTypedJv sing jv) f = f jv sing
+withSomeTypedJv (MkSomeTypedJv jv) f = f jv kindSing
 
 -- | Frees the 'Jv' if it doesn't have the expected kind.
-cast :: forall kind m. (KnownKind kind, L.MonadIO m)
-     => SomeTypedJv %1 -> m (Maybe (TypedJv kind))
-cast (MkSomeTypedJv sing1 jv) =
-  let sing2 = kindSing @kind
-   in case kindEq sing1 sing2 of
-        Nothing -> free jv L.>> L.pure Nothing
-        Just Refl -> L.pure (Just jv)
+cast :: forall kind1 m jv. (KnownKind kind1, L.MonadIO m, HasJv jv)
+     => jv %1
+     -> m (Either (Ur BS.ByteString) (TypedJv kind1))
+cast jv =
+  typeJv jv L.>>= \case
+    Left err -> L.pure (Left err)
+    Right (MkSomeTypedJv @kind2 jv) ->
+      case kindEq (kindSing @kind1) (kindSing @kind2) of
+        Left mismatch -> L.do
+          free jv
+          L.pure (Left (Ur mismatch))
+        Right Refl -> L.pure (Right jv)
 
 --------------------------------------------------------------------------------
 -- HasJv
@@ -182,6 +177,9 @@ cast (MkSomeTypedJv sing1 jv) =
 class HasJv x where
   copy :: L.MonadIO m => x %1 -> m (x, x)
   forgetType :: x %1 -> Jv
+  typeJv :: L.MonadIO m
+         => x %1
+         -> m (Either (Ur BS.ByteString) SomeTypedJv)
 
 free :: (L.MonadIO m, HasJv x) => x %1 -> m ()
 free = UL.toLinear $ \x -> L.liftSystemIO P.. jvFree P.$ forgetType x
@@ -191,17 +189,33 @@ instance HasJv Jv where
     jv2 <- L.liftSystemIO (jvCopy jv)
     L.pure (jv, jv2)
   forgetType = id
+  typeJv jv = L.do
+    (Ur kind, jv) <- getKind jv
+    case kind of
+      InvalidKind -> L.do
+        invalidGetMessage jv L.>>= \case
+          Nothing -> L.pure $ Left (Ur "Invalid JSON")
+          Just msg -> L.do
+            L.pure (Left msg)
+      NullKind -> L.pure (Right (MkSomeTypedJv @'NullKind (TypedJv jv)))
+      BoolKind -> L.pure (Right (MkSomeTypedJv @'BoolKind (TypedJv jv)))
+      NumberKind -> L.pure (Right (MkSomeTypedJv @'NumberKind (TypedJv jv)))
+      StringKind -> L.pure (Right (MkSomeTypedJv @'StringKind (TypedJv jv)))
+      ArrayKind -> L.pure (Right (MkSomeTypedJv @'ArrayKind (TypedJv jv)))
+      ObjectKind -> L.pure (Right (MkSomeTypedJv @'ObjectKind (TypedJv jv)))
 
-instance HasJv (TypedJv k) where
+instance KnownKind k => HasJv (TypedJv k) where
   copy (TypedJv jv) =
     (\(v, v2) -> (TypedJv v, TypedJv v2)) L.<$> copy jv
   forgetType (TypedJv jv) = jv
+  typeJv jv = L.pure $ Right (MkSomeTypedJv jv)
 
 instance HasJv SomeTypedJv where
-  copy (MkSomeTypedJv k tjv) = L.do
+  copy (MkSomeTypedJv tjv) = L.do
     (v1, v2) <- copy tjv
-    L.pure (MkSomeTypedJv k v1, MkSomeTypedJv k v2)
-  forgetType (MkSomeTypedJv _ (TypedJv jv)) = jv
+    L.pure (MkSomeTypedJv v1, MkSomeTypedJv v2)
+  forgetType (MkSomeTypedJv (TypedJv jv)) = jv
+  typeJv jv = L.pure $ Right jv
 
 --------------------------------------------------------------------------------
 -- Parsing
@@ -209,40 +223,23 @@ instance HasJv SomeTypedJv where
 
 parse :: L.MonadIO m
       => BS.ByteString
-      -> m (Either (Ur BS.ByteString) SomeTypedJv)
-parse str = L.liftSystemIO P.$
-  validate P.=<< BS.useAsCString str jvParse
+      -> m Jv
+parse str =
+  L.liftSystemIO (BS.unsafeUseAsCString str jvParse)
 
-parseMaybe :: L.MonadIO m => BS.ByteString -> m (Maybe SomeTypedJv)
-parseMaybe str =
-  either (\(Ur _) -> Nothing) Just L.<$> parse str
-
-parseTyped :: (KnownKind kind, L.MonadIO m)
-           => BS.ByteString -> m (Maybe (TypedJv kind))
-parseTyped str =
-  parseMaybe str L.>>= \case
-    Nothing -> L.pure Nothing
-    Just tjv -> cast tjv
-
-validate :: Jv -> IO (Either (Ur BS.ByteString) SomeTypedJv)
-validate jv = do
-  mTjv <- typeJv'' jv
-  -- check if it's valid
-  case mTjv of
-    Just tjv -> P.pure (Right tjv)
-    Nothing -> do
-      msg <- jvInvalidGetMsg jv
-      msgK <- jvGetKind msg
-      -- check if there's an error message
-      if msgK P.== jvKindNull
-         then do
-           jvFree msg
-           P.pure (Left $ Ur "Invalid JSON")
-         else do
-           cStr <- jvStringValue msg
-           bs <- BS.packCString cStr
-           jvFree msg
-           P.pure (Left $ Ur bs)
+invalidGetMessage :: L.MonadIO m => Jv %1 -> m (Maybe (Ur BS.ByteString))
+invalidGetMessage = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
+  msg <- jvInvalidGetMsg jv
+  msgK <- jvGetKind msg
+  if msgK P.== jvKindString
+     then do
+       cStr <- jvStringValue msg
+       bs <- BS.packCString cStr
+       jvFree msg
+       P.pure (Just (Ur bs))
+     else do
+       jvFree msg
+       P.pure Nothing
 
 --------------------------------------------------------------------------------
 -- Pretty Printing
@@ -304,8 +301,17 @@ render = UL.toLinear $ \jv opts -> L.liftSystemIOU P.$ P.do
 
 getKind :: L.MonadIO m => Jv %1 -> m (Ur Kind, Jv)
 getKind = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
-  k <- toEnum P.. fromIntegral P.<$> jvGetKind jv
-  P.pure (Ur k, jv)
+  k <- jvGetKind jv
+  P.pure P.$
+    if | k P.== jvKindInvalid -> (Ur InvalidKind, jv)
+       | k P.== jvKindNull -> (Ur NullKind, jv)
+       | k P.== jvKindFalse -> (Ur BoolKind, jv)
+       | k P.== jvKindTrue -> (Ur BoolKind, jv)
+       | k P.== jvKindNumber -> (Ur NumberKind, jv)
+       | k P.== jvKindString -> (Ur StringKind, jv)
+       | k P.== jvKindArray -> (Ur ArrayKind, jv)
+       | k P.== jvKindObject -> (Ur ObjectKind, jv)
+       | otherwise -> (Ur InvalidKind, jv)
 
 equal :: (HasJv a, HasJv b, L.MonadIO m) => a %1 -> b %1 -> m (Ur Bool)
 equal = UL.toLinear $ \a -> UL.toLinear $ \b -> L.liftSystemIOU P.$
@@ -322,15 +328,30 @@ contains = UL.toLinear $ \a -> UL.toLinear $ \b -> L.liftSystemIOU P.$
   toEnum P.. fromIntegral
     P.<$> jvContains (forgetType a) (forgetType b)
 
+loadFile :: L.MonadIO m => BS.ByteString -> m Jv
+loadFile fileName = L.liftSystemIO P.$ do
+  BS.unsafeUseAsCString fileName P.$ \cstr ->
+    jvLoadFile cstr 0
+
+loadFileCast :: (L.MonadIO m, KnownKind kind)
+             => BS.ByteString -> m (Either (Ur BS.ByteString) (TypedJv kind))
+loadFileCast fileName =
+  loadFile fileName L.>>= typeJv L.>>= \case
+    Left err -> L.pure (Left err)
+    Right jv -> cast jv
+
 nullJv :: L.MonadIO m => m (TypedJv 'NullKind)
 nullJv = L.liftSystemIO (TypedJv P.<$> jvNull)
 
-bool :: L.MonadIO m => Bool -> m SomeTypedJv
+bool :: L.MonadIO m => Bool -> m (TypedJv 'BoolKind)
 bool b = L.liftSystemIO P.$ do
   jv <- jvBool P.. fromIntegral P.$ fromEnum b
-  P.pure P.$ if b
-     then MkSomeTypedJv TrueS (TypedJv jv)
-     else MkSomeTypedJv FalseS (TypedJv jv)
+  P.pure (TypedJv jv)
+
+boolValue :: L.MonadIO m => TypedJv 'BoolKind %1 -> m (Ur Bool)
+boolValue jv = L.do
+  true <- bool True
+  equal jv true
 
 number :: (L.MonadIO m, Real n) => n -> m (TypedJv 'NumberKind)
 number n = L.liftSystemIO P.$ number' n
@@ -380,10 +401,15 @@ arrayConcat = UL.toLinear $ \(TypedJv a) ->
   P.pure (TypedJv a)
 
 arrayGet :: L.MonadIO m
-         => TypedJv 'ArrayKind %1 -> Int -> m (Maybe SomeTypedJv)
-arrayGet = UL.toLinear $ \arr idx -> L.liftSystemIO P.$ do
-  el <- jvArrayGet (forgetType arr) (fromIntegral idx)
-  typeJv' el
+         => TypedJv 'ArrayKind %1
+         -> Int
+         -> m (Either (Ur BS.ByteString) SomeTypedJv)
+arrayGet arr ix = arrayGet' arr ix L.>>= typeJv
+
+arrayGet' :: L.MonadIO m
+          => TypedJv 'ArrayKind %1 -> Int -> m Jv
+arrayGet' = UL.toLinear $ \arr idx -> L.liftSystemIO P.$ do
+  jvArrayGet (forgetType arr) (fromIntegral idx)
 
 arraySet :: (HasJv el, L.MonadIO m)
          => TypedJv 'ArrayKind %1 -> Int -> el %1 -> m (TypedJv 'ArrayKind)
@@ -397,7 +423,28 @@ arraySlice = UL.toLinear $ \arr start end -> L.liftSystemIO P.$ do
   TypedJv P.<$>
     jvArraySlice (forgetType arr) (fromIntegral start) (fromIntegral end)
 
--- TODO arrayElems :: TypedJv 'ArrayKind %1 -> m [SomeTypedJv]
+arrayElems :: L.MonadIO m
+           => TypedJv 'ArrayKind %1 -> m [SomeTypedJv]
+arrayElems arr = L.do
+  (arr, arr2) <- copy arr
+  Ur len <- arrayLength arr2
+
+  let extract
+        :: L.MonadIO m
+        => (TypedJv 'ArrayKind, [SomeTypedJv]) %1
+        -> Ur Int %1
+        -> m (TypedJv 'ArrayKind, [SomeTypedJv])
+      extract (arr, els) (Ur i) = L.do
+        (arr, arr2) <- copy arr
+        arrayGet arr2 i L.>>= \case
+          Left (Ur _) -> L.pure (arr, els)
+          Right el -> L.pure (arr, el : els)
+
+  (arr, els) <-
+    L.foldM extract (arr, []) (Ur P.<$> [len - 1, len - 2 .. 0])
+
+  free arr
+  L.pure els
 
 arrayIndexes :: L.MonadIO m
              => TypedJv 'ArrayKind %1
@@ -442,23 +489,30 @@ stringSlice = UL.toLinear $ \jv start end -> L.liftSystemIO P.$
 object :: L.MonadIO m => m (TypedJv 'ObjectKind)
 object = TypedJv L.<$> L.liftSystemIO jvObject
 
--- TODO use Text for object keys?
 objectGet :: L.MonadIO m
           => TypedJv 'ObjectKind %1
           -> BS.ByteString
-          -> m (Maybe SomeTypedJv)
-objectGet = UL.toLinear $ \obj key -> L.liftSystemIO P.$ do
+          -> m (Either (Ur BS.ByteString) SomeTypedJv)
+objectGet jv key = objectGet' jv key L.>>= typeJv
+
+-- TODO use Text for object keys?
+objectGet' :: L.MonadIO m
+           => TypedJv 'ObjectKind %1
+           -> BS.ByteString
+           -> m Jv
+objectGet' = UL.toLinear $ \obj key -> L.liftSystemIO P.$ do
   jvKey <- BS.useAsCString key jvString
-  typeJv' P.=<< jvObjectGet (forgetType obj) jvKey
+  jvObjectGet (forgetType obj) jvKey
 
 objectHas :: L.MonadIO m
           => TypedJv 'ObjectKind %1
-          -> TypedJv 'StringKind %1
+          -> BS.ByteString
           -> m (Ur Bool)
-objectHas = UL.toLinear $ \obj ->
-            UL.toLinear $ \key -> L.liftSystemIOU P.$ do
+objectHas = UL.toLinear $ \obj key ->
+            L.liftSystemIOU P.$ do
+  keyJv <- BS.useAsCString key jvString
   P.toEnum P.. P.fromIntegral
-    P.<$> jvObjectHas (forgetType obj) (forgetType key)
+    P.<$> jvObjectHas (forgetType obj) keyJv
 
 objectSet :: (HasJv value, L.MonadIO m)
           => TypedJv 'ObjectKind %1
@@ -552,18 +606,25 @@ componentToJv (ArrayIdx i) = P.do
 componentToJv (ObjectKey key) =
   BS.useAsCString key jvString
 
-getPath :: (HasJv jv, L.MonadIO m) => jv %1 -> Path -> m (Maybe SomeTypedJv)
-getPath = UL.toLinear $ \jv path -> L.liftSystemIO P.$ do
+getPath :: (HasJv jv, L.MonadIO m) => jv %1 -> Path -> m (Either (Ur BS.ByteString) SomeTypedJv)
+getPath jv path = getPath' jv path L.>>= typeJv
+
+getPath' :: (HasJv jv, L.MonadIO m) => jv %1 -> Path -> m Jv
+getPath' = UL.toLinear $ \jv path -> L.liftSystemIO P.$ do
   TypedJv pathJv <- pathToJv path
   jvGetpath (forgetType jv) pathJv
-  typeJv' (forgetType jv)
+  P.pure (forgetType jv)
 
 setPath :: (HasJv root, HasJv val, L.MonadIO m)
-        => root %1 -> Path -> val %1 -> m (Maybe SomeTypedJv)
-setPath = UL.toLinear $ \jv path -> UL.toLinear $ \val -> L.liftSystemIO P.$ do
+        => root %1 -> Path -> val %1 -> m (Either (Ur BS.ByteString) SomeTypedJv)
+setPath root path jv = setPath' root path jv L.>>= typeJv
+
+setPath' :: (HasJv root, HasJv val, L.MonadIO m)
+         => root %1 -> Path -> val %1 -> m Jv
+setPath' = UL.toLinear $ \jv path -> UL.toLinear $ \val -> L.liftSystemIO P.$ do
   TypedJv pathJv <- pathToJv path
   jvSetpath (forgetType jv) pathJv (forgetType val)
-  typeJv' (forgetType jv)
+  P.pure (forgetType jv)
 
 --------------------------------------------------------------------------------
 -- Program Execution
@@ -574,25 +635,46 @@ execProgram
   => ClosedProgram -> val %1 -> m [SomeTypedJv]
 execProgram = execProgramUnsafe P.. renderClosedProgram
 
-execProgramUnsafe
-  :: (HasJv val, L.MonadIO m)
-  => BS.ByteString -> val %1 -> m [SomeTypedJv]
-execProgramUnsafe pgrm = UL.toLinear $ \jv -> L.liftSystemIO P.$ do
-  jq <- jqInit
-  didCompile <- BS.useAsCString pgrm P.$ jqCompile jq
+compile :: L.MonadIO m => JqState %1 -> BS.ByteString -> m (Maybe JqState)
+compile = UL.toLinear $ \jq pgrm -> L.liftSystemIO P.$ do
+  didCompile <- BS.useAsCString pgrm (jqCompile jq)
   case didCompile of
     0 -> do
       jqTeardown jq
-      jvFree (forgetType jv)
-      P.pure []
+      P.pure Nothing
+    _ -> P.pure P.$ Just jq
 
-    _ -> do
-      jqStart jq (forgetType jv) 0 -- what are these flags for?
-      let loop = do
-            mV <- typeJv' P.=<< jqNext jq
-            case mV of
-              Nothing -> P.pure []
-              Just v -> (v :) P.<$> loop
-      res <- loop
-      jqTeardown jq
-      P.pure res
+start :: (L.MonadIO m, HasJv jv) => JqState %1 -> jv %1 -> m JqState
+start = UL.toLinear $ \jq -> UL.toLinear $ \jv -> L.liftSystemIO P.$ do
+  jqStart jq (forgetType jv) 0
+  P.pure jq
+
+teardown :: L.MonadIO m => JqState %1 -> m ()
+teardown = UL.toLinear $ L.liftSystemIO P.. jqTeardown
+
+next :: L.MonadIO m => JqState %1 -> m (JqState, Jv)
+next = UL.toLinear $ \jq -> L.liftSystemIO P.$ do
+  jv <- jqNext jq
+  P.pure (jq, jv)
+
+execProgramUnsafe
+  :: (HasJv val, L.MonadIO m)
+  => BS.ByteString -> val %1 -> m [SomeTypedJv]
+execProgramUnsafe pgrm jv = L.do
+  jq <- L.liftSystemIO jqInit
+  compile jq pgrm L.>>= \case
+    Nothing -> L.do
+      free jv
+      L.pure []
+    Just jq -> L.do
+      jq <- start jq jv
+      let loop jq = L.do
+            (jq, jv) <- next jq
+            typeJv jv L.>>= \case
+              Left (Ur _) -> L.pure ([], jq)
+              Right v ->
+                (\(els, jq) -> (v : els, jq))
+                L.<$> loop jq
+      (res, jq) <- loop jq
+      teardown jq
+      L.pure res

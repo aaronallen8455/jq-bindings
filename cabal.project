@@ -1,1 +1,1 @@
-packages: */*.cabal
+packages: jq-bindings-core/*.cabal jq-codec/*.cabal

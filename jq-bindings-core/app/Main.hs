@@ -42,7 +42,7 @@ pgrm = do
 
 main :: IO ()
 main = L.withLinearIO P.$ L.do
-  parse "{\"test\": true}" L.>>= FL.traverse cast L.>>= \case
+  parse "{\"test\": true}" L.>>= typeJv L.>>= FL.traverse cast L.>>= \case
     Left (Ur err) -> L.do
       L.fromSystemIO $ BS.putStrLn err
     Right Nothing -> L.do
@@ -84,8 +84,8 @@ main = L.withLinearIO P.$ L.do
       (obj4, obj5) <- copy obj4
 
       objectGet obj4 "key" L.>>= \case
-        Nothing -> L.fromSystemIO $ BS.putStrLn "field not found"
-        Just field -> L.do
+        Left (Ur _) -> L.fromSystemIO $ BS.putStrLn "field not found"
+        Right field -> L.do
           Ur fieldBs <- render field defPrintOpts
           L.fromSystemIO $ BS.putStrLn fieldBs
 
@@ -99,25 +99,26 @@ main = L.withLinearIO P.$ L.do
       --pgrmResults <- execProgramUnsafe ".bar | .bar , .key" obj
       pgrmResults <- execProgram [jq|.bar | .bar , .key |] obj
 
-      (bss :: [Ur BS.ByteString]) <-
+      bss <-
         FL.traverse (flip render defPrintOpts { printPretty = True, printSpace1 = True })
           pgrmResults
-      FL.void $ FL.for bss P.$
-        \(Ur bs) -> L.fromSystemIO (BS.putStrLn bs)
+
+      FL.void $ FL.for bss
+        (\(Ur bs) -> L.fromSystemIO (BS.putStrLn bs))
 
       (obj6, obj7) <- copy obj6
 
       getPath (forgetType obj6) ["key", 0, "test"] L.>>= \case
-        Just thing -> L.do
+        Right thing -> L.do
           Ur bs2 <- render thing defPrintOpts
           L.fromSystemIO $ BS.putStrLn bs2
-        Nothing -> L.fromSystemIO $ BS.putStrLn "doesn't exist"
+        Left (Ur _) -> L.fromSystemIO $ BS.putStrLn "doesn't exist"
 
       bool False L.>>= setPath (forgetType obj7) ["key", 0, "test"] L.>>= \case
-        Just obj7 -> L.do
+        Right obj7 -> L.do
           Ur bs <- render obj7 defPrintOpts
             { printPretty = True, printColor = True, printSpace1 = True }
           L.fromSystemIO $ BS.putStrLn bs
-        Nothing -> L.pure ()
+        Left (Ur _) -> L.pure ()
 
   L.pure (Ur ())

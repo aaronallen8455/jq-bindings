@@ -176,6 +176,9 @@ foreign import ccall unsafe "wrapper.c jv_getpath_w"
 foreign import ccall unsafe "wrapper.c jv_parse_w"
   jvParse :: CString -> IO Jv
 
+foreign import ccall unsafe "wrapper.c jv_load_file_w"
+  jvLoadFile :: CString -> CInt -> IO Jv
+
 -- | Frees the Jv
 foreign import ccall unsafe "wrapper.c jv_dump_string_w"
   jvDumpString :: Jv -> JvPrintFlags -> IO Jv

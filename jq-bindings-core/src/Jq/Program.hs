@@ -34,7 +34,6 @@ data OpenProgram
   deriving (Show, Eq, Data)
 
 -- TODO array/string slice
--- TODO object construction
 
 -- | AST for "top level" programs that cannot be extended with field accessors
 -- or array indices.
