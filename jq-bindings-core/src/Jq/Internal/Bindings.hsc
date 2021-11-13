@@ -131,6 +131,9 @@ foreign import ccall unsafe "wrapper.c jv_string_value_w"
 foreign import ccall unsafe "wrapper.c jv_string_w"
   jvString :: CString -> IO Jv
 
+foreign import ccall unsafe "wrapper.c jv_string_sized_w"
+  jvStringSized :: CString -> CInt -> IO Jv
+
 foreign import ccall unsafe "wrapper.c jv_string_length_bytes_w"
   jvStringLengthBytes :: Jv -> IO CInt
 

@@ -142,6 +142,12 @@ jv* jv_string_w (const char* str) {
   return jvPtr;
 }
 
+jv* jv_string_sized_w (const char* str, int len) {
+  jv *jvPtr = malloc(sizeof *jvPtr);
+  *jvPtr = jv_string_sized(str, len);
+  return jvPtr;
+}
+
 int jv_string_length_bytes_w(jv* x) {
   int r = jv_string_length_bytes(*x);
   free(x);

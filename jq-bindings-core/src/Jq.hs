@@ -462,7 +462,10 @@ arrayLength = UL.toLinear $ \a -> L.liftSystemIO P.$
 
 string :: L.MonadIO m => BS.ByteString -> m (TypedJv 'StringKind)
 string bs =
-  L.liftSystemIO P.$ BS.useAsCString bs (P.fmap TypedJv P.. jvString)
+  L.liftSystemIO P.$ BS.unsafeUseAsCStringLen bs
+    (\(cstr, len) -> P.fmap TypedJv P.$
+        jvStringSized cstr (fromIntegral len)
+    )
 
 stringValue :: L.MonadIO m
             => TypedJv 'StringKind %1

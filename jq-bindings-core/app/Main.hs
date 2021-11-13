@@ -45,9 +45,9 @@ main = L.withLinearIO P.$ L.do
   parse "{\"test\": true}" L.>>= typeJv L.>>= FL.traverse cast L.>>= \case
     Left (Ur err) -> L.do
       L.fromSystemIO $ BS.putStrLn err
-    Right Nothing -> L.do
+    Right (Left (Ur _)) -> L.do
       L.fromSystemIO $ BS.putStrLn "Wrong type!"
-    Right (Just x) -> L.do
+    Right (Right x) -> L.do
       (x, x') <- copy x
       (x, x'') <- copy x
       Ur b <- equal x' x''

@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 import qualified Control.Functor.Linear as FL
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Coerce (coerce)
 import           Data.Functor.Contravariant
 import qualified Data.Text as T
 import           GHC.Generics (Generic)
@@ -105,8 +106,7 @@ newtype JsonString =
   deriving (Eq, Show)
 
 instance Arbitrary JsonString where
-  arbitrary = JsonString <$> liftArbitrary objKeyCharGen
-
-objKeyCharGen :: Gen Char
-objKeyCharGen = elements $
-  ['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ ['_', '$', '!', ' ']
+  arbitrary = JsonString . filter (/= '\NUL')
+            . getASCIIString <$> arbitrary
+  shrink = fmap (JsonString . getASCIIString)
+         . shrink . ASCIIString . unJsonString
