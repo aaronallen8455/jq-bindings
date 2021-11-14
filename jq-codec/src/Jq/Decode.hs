@@ -68,7 +68,7 @@ instance Alternative Decoder where
   ma <|> mb = MkDecoder $ \jv -> FL.do
     (jv, jv2) <- Jq.copy jv
     runDecoder ma jv2 FL.>>= \case
-      L.Ur (Left err) -> FL.do
+      L.Ur (Left _) -> FL.do
         runDecoder mb jv
       L.Ur (Right a) -> FL.do
         Jq.free jv
