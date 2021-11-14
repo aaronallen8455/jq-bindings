@@ -179,6 +179,9 @@ foreign import ccall unsafe "wrapper.c jv_getpath_w"
 foreign import ccall unsafe "wrapper.c jv_parse_w"
   jvParse :: CString -> IO Jv
 
+foreign import ccall unsafe "wrapper.c jv_parse_sized_w"
+  jvParseSized :: CString -> CInt -> IO Jv
+
 foreign import ccall unsafe "wrapper.c jv_load_file_w"
   jvLoadFile :: CString -> CInt -> IO Jv
 

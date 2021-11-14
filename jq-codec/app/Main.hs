@@ -18,17 +18,15 @@ import           Jq
 main :: IO ()
 main = do
   bss <- L.withLinearIO $ FL.do
-    jv <- loadFile "./persons9000.json"
-    typeJv jv FL.>>= \case
+    loadFile "./persons9000.json" FL.>>= \case
       Left (L.Ur err) -> FL.do
         L.fromSystemIO (print err)
         FL.pure (L.Ur [])
       Right jv -> FL.do
-        L.fromSystemIO (putStrLn "RIGHT")
         results <- execProgram
-          [jq| .[0][]
+          [jq| .[]
             | select((.eyeColor == "green" or .eyeColor == "blue")
-                and .age == 30 and (.tags[] | . == "sit" or . == "nisi"))
+                and .age >= 30 and (.tags[] | . == "sit" or . == "nisi"))
             | { eyeColor, age, isActive, balance, name, tags }
           |] jv
 
