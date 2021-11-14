@@ -66,6 +66,7 @@ module Jq
   , objectSet
   , parse
   , render
+  , renderMultiple
   , setPath
   , string
   , stringIndexes
@@ -81,6 +82,7 @@ import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 import           Data.Foldable (for_)
+import qualified Data.Functor.Linear as DL
 import           Data.String
 import           Data.Traversable (for)
 import           Data.Type.Equality ((:~:)(..))
@@ -295,6 +297,12 @@ render = UL.toLinear $ \jv opts -> L.liftSystemIOU P.$ P.do
   jvFree x
   P.pure bs
 
+renderMultiple :: (L.MonadIO m, HasJv jv)
+               => [jv] %1 -> PrintOpts -> m (Ur [BS.ByteString])
+renderMultiple jvs opts = L.do
+  (Ur urs) <- move DL.<$> DL.traverse (flip render opts) jvs
+  L.pure (Ur P.$ P.fmap (\(Ur x) -> x) urs)
+
 --------------------------------------------------------------------------------
 -- API
 --------------------------------------------------------------------------------
@@ -330,7 +338,7 @@ contains = UL.toLinear $ \a -> UL.toLinear $ \b -> L.liftSystemIOU P.$
 
 loadFile :: L.MonadIO m => BS.ByteString -> m Jv
 loadFile fileName = L.liftSystemIO P.$ do
-  BS.unsafeUseAsCString fileName P.$ \cstr ->
+  BS.useAsCString fileName P.$ \cstr ->
     jvLoadFile cstr 0
 
 loadFileCast :: (L.MonadIO m, KnownKind kind)
@@ -460,6 +468,7 @@ arrayLength :: L.MonadIO m
 arrayLength = UL.toLinear $ \a -> L.liftSystemIO P.$
   Ur P.. fromIntegral P.<$> jvArrayLength (forgetType a)
 
+-- | Construct a JSON string. Input should not contain null bytes.
 string :: L.MonadIO m => BS.ByteString -> m (TypedJv 'StringKind)
 string bs =
   L.liftSystemIO P.$ BS.unsafeUseAsCStringLen bs

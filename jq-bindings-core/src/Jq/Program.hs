@@ -45,7 +45,33 @@ data ClosedProgram
   | Parens ClosedProgram (Maybe OpenProgram)
   | RecursiveDescent (Maybe OpenProgram)
   | Object [(BS8.ByteString, ClosedProgram)]
-  -- This can have certain accessors, but not regular key accessors
+  | Select ClosedProgram (Maybe OpenProgram)
+  -- ^ filter by a predicate although the expression can really be anything
+  | Predicate ClosedProgram ComparisonOp ClosedProgram
+  | BooleanCombo BoolOp ClosedProgram ClosedProgram
+  | LiteralExpr Literal
+  -- ^ treat as the the conjuntion or disjunction of two booleans
+  deriving (Show, Eq, Data)
+
+data BoolOp
+  = And
+  | Or
+  deriving (Show, Eq, Data)
+
+data ComparisonOp
+  = Equal
+  | LessThan
+  | LessThanEqual
+  | GreaterThan
+  | GreaterThanEqual
+  deriving (Show, Eq, Data)
+
+data Literal
+  = LitString BS8.ByteString
+  | LitInt Int
+  | LitDouble Double
+  | LitBool Bool
+  | LitNull
   deriving (Show, Eq, Data)
 
 -- This is not a complete embedding of the jq language. The AST does not
@@ -68,13 +94,54 @@ renderOpenProgram = \case
 renderClosedProgram :: ClosedProgram -> BS8.ByteString
 renderClosedProgram = \case
   Identity p -> "." <> foldMap renderOpenProgram p
+
   Pipe a b -> renderClosedProgram a <> " | " <> renderClosedProgram b
+
   Comma a b -> renderClosedProgram a <> ", " <> renderClosedProgram b
-  AsArray p o -> "[" <> renderClosedProgram p <> "]" <> foldMap renderOpenProgram o
-  Parens p o -> "(" <> renderClosedProgram p <> ")" <> foldMap renderOpenProgram o
+
+  AsArray p o ->
+    "[" <> renderClosedProgram p <> "]" <> foldMap renderOpenProgram o
+
+  Parens p o ->
+    "(" <> renderClosedProgram p <> ")" <> foldMap renderOpenProgram o
+
   RecursiveDescent p -> ".." <> foldMap renderOpenProgram p
+
   Object obj -> "{" <> BS8.intercalate "," (renderPairs <$> obj) <> "}"
     where renderPairs (key, p) = "\"" <> key <> "\":" <> renderClosedProgram p
+
+  Select pred rest ->
+    "select(" <> renderClosedProgram pred <> ")"
+    <> foldMap renderOpenProgram rest
+
+  Predicate l op r ->
+    renderClosedProgram l <> " " <> renderComparisonOp op
+    <> " " <> renderClosedProgram r
+
+  BooleanCombo op l r ->
+    renderClosedProgram l <> " " <> renderBoolOp op
+    <> " " <> renderClosedProgram r
+
+  LiteralExpr l ->
+    case l of
+      LitString bs -> "\"" <> bs <> "\""
+      LitInt int -> BS8.pack $ show int
+      LitDouble dbl -> BS8.pack $ show dbl
+      LitBool b -> if b then "true" else "false"
+      LitNull -> "null"
+
+renderComparisonOp :: ComparisonOp -> BS8.ByteString
+renderComparisonOp = \case
+  Equal -> "=="
+  LessThan -> "<"
+  LessThanEqual -> "<="
+  GreaterThan -> ">"
+  GreaterThanEqual -> ">="
+
+renderBoolOp :: BoolOp -> BS8.ByteString
+renderBoolOp = \case
+  And -> "and"
+  Or -> "or"
 
 --------------------------------------------------------------------------------
 -- Parser
@@ -89,17 +156,32 @@ parseProgram =
 parseClosed :: Parser ClosedProgram
 parseClosed = do
   between spaces spaces parseClosedInner
+    `chainl1` (BooleanCombo <$> parseBoolOp)
     `chainl1` (Comma <$ char ',')
     `chainl1` (Pipe <$ char '|')
 
 parseClosedInner :: Parser ClosedProgram
-parseClosedInner =
-  choice [ parseParens
-         , parseAsArray
-         , parseRecursiveDescent
-         , parseIdentity
-         , parseObject
-         ]
+parseClosedInner = do
+  let parseExpr =
+        choice [ parseParens
+               , parseAsArray
+               , parseRecursiveDescent
+               , parseIdentity
+               , parseObject
+               , parseSelect
+               , LiteralExpr <$> parseLiteral
+               ]
+
+  expr <- parseExpr
+  spaces
+  -- Check for a comparison operator
+  mComparisonOp <- optional parseComparisonOp
+  case mComparisonOp of
+    Nothing -> pure expr
+    Just compOp -> do
+      spaces
+      expr2 <- parseExpr
+      pure $ Predicate expr compOp expr2
 
 parseIdentity :: Parser ClosedProgram
 parseIdentity = do
@@ -135,11 +217,15 @@ parseObject = do
         mQEnd <- optional (char '"')
         guard (mQStart == mQEnd) <?> "object key quotes"
         spaces
-        _ <- char ':'
-        spaces
-        pgrm <- (parseClosedInner <* spaces)
-                  `chainl1` (Pipe <$ (char '|' <* spaces))
-        pure (key, pgrm)
+        -- if no colon, use the key as the path
+        mColon <- optional $ char ':'
+        case mColon of
+          Nothing -> pure (key, Identity (Just $ AtKeys (pure key) Nothing))
+          _ -> do
+            spaces
+            pgrm <- (parseClosedInner <* spaces)
+                      `chainl1` (Pipe <$ (char '|' <* spaces))
+            pure (key, pgrm)
 
   pairs <-
     between (char '{' *> spaces)
@@ -147,6 +233,13 @@ parseObject = do
             (sepBy1 parseKeys (char ',' *> spaces))
 
   pure $ Object pairs
+
+parseSelect :: Parser ClosedProgram
+parseSelect = do
+  void $ string "select"
+  spaces
+  pred <- between (char '(') (char ')') parseClosed
+  Select pred <$> optional (parseOpen False True)
 
 parseOpen :: Bool -> Bool -> Parser OpenProgram
 parseOpen isFirst allowAtKey = do
@@ -183,7 +276,7 @@ parseIterator = Iterator <$ char ']'
 
 parseAtIndices :: Parser (Maybe OpenProgram -> OpenProgram)
 parseAtIndices = do
-  Just idxs <- NE.nonEmpty <$> sepBy1 parseIdx (char ',' *> spaces)
+  Just idxs <- NE.nonEmpty <$> sepBy1 parseInt (char ',' *> spaces)
   void $ char ']'
   pure $ AtIndices idxs
 
@@ -194,12 +287,53 @@ parseKey = do
   guard (not $ BS8.null k) <?> "non-empty key"
   pure k
 
-parseIdx :: Parser Int
-parseIdx = do
+parseInt :: Parser Int
+parseInt = do
   n <- maybe id (const negate)
        <$> optional (char '-')
-  Just idx <- readMaybe <$> many1 digit
-  pure . n $ fromInteger idx
+  Just int <- readMaybe <$> many1 digit
+  pure $ n int
+
+parseDouble :: Parser Double
+parseDouble = do
+  n <- maybe id (const negate)
+       <$> optional (char '-')
+  whole <- many1 digit
+  void $ char '.'
+  Just dbl <- readMaybe . ((whole <> ".") <>) <$> many1 digit
+  pure $ n dbl
+
+parseBoolOp :: Parser BoolOp
+parseBoolOp =
+  choice [ And <$ string "and"
+         , Or <$ string "or"
+         ]
+
+parseComparisonOp :: Parser ComparisonOp
+parseComparisonOp =
+  choice [ Equal <$ string "=="
+         , LessThanEqual <$ try (string "<=")
+         , LessThan <$ string "<"
+         , GreaterThanEqual <$ try (string ">=")
+         , GreaterThan <$ string ">"
+         ]
+
+parseLiteral :: Parser Literal
+parseLiteral =
+  choice [ LitString <$> parseLitString
+         , LitDouble <$> try parseDouble
+         , LitInt <$> parseInt
+         , LitBool <$> parseBool
+         , LitNull <$ string "null"
+         ]
+  where
+    parseLitString = BS8.pack <$>
+      between (char '"') (char '"') (many1 $ satisfy (/= '"'))
+      -- TODO doesn't handle escaped quotes
+    parseBool =
+      choice [ True <$ string "true"
+             , False <$ string "false"
+             ]
 
 --------------------------------------------------------------------------------
 -- QuasiQuoter

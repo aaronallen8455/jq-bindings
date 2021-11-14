@@ -96,8 +96,9 @@ main = L.withLinearIO P.$ L.do
       L.fromSystemIO $ BS.putStrLn bs
 
       (obj6, obj) <- copy obj6
-      --pgrmResults <- execProgramUnsafe ".bar | .bar , .key" obj
-      pgrmResults <- execProgram [jq|.bar | .bar , .key |] obj
+      L.fromSystemIO (putStrLn ".............")
+      --pgrmResults <- execProgramUnsafe "select (.[\"bar\"][\"key\"][2] == \"foo\")" obj
+      pgrmResults <- execProgram [jq|select (.bar.key[0].test) |] obj
 
       bss <-
         FL.traverse (flip render defPrintOpts { printPretty = True, printSpace1 = True })
@@ -105,6 +106,8 @@ main = L.withLinearIO P.$ L.do
 
       FL.void $ FL.for bss
         (\(Ur bs) -> L.fromSystemIO (BS.putStrLn bs))
+
+      L.fromSystemIO (putStrLn ".............")
 
       (obj6, obj7) <- copy obj6
 
