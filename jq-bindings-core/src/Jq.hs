@@ -289,15 +289,19 @@ printOptsToFlags MkPrintOpts{..} =
     , [ jvPrintSpace2 | printSpace2 ]
     ]
 
--- Consumes the Jv argument
 render :: (L.MonadIO m, HasJv jv)
        => jv %1 -> PrintOpts -> m (Ur BS.ByteString)
-render = UL.toLinear $ \jv opts -> L.liftSystemIOU P.$ P.do
-  x <- jvDumpString (forgetType jv) (printOptsToFlags opts)
-  cStr <- jvStringValue x
-  bs <- BS.packCString cStr
-  jvFree x
-  P.pure bs
+render jv opts = L.do
+  x <- dumpString jv opts
+  (jv, Ur bs) <- stringValue x
+  free jv
+  L.pure (Ur bs)
+
+dumpString :: (L.MonadIO m, HasJv jv)
+           => jv %1 -> PrintOpts -> m (TypedJv 'StringKind)
+dumpString = UL.toLinear $ \jv opts -> L.liftSystemIO P.$
+  TypedJv P.<$>
+    jvDumpString (forgetType jv) (printOptsToFlags opts)
 
 renderMultiple :: (L.MonadIO m, HasJv jv)
                => [jv] %1 -> PrintOpts -> m (Ur [BS.ByteString])

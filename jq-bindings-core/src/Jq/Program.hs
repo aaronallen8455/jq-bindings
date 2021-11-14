@@ -49,8 +49,8 @@ data ClosedProgram
   -- ^ filter by a predicate although the expression can really be anything
   | Predicate ClosedProgram ComparisonOp ClosedProgram
   | BooleanCombo BoolOp ClosedProgram ClosedProgram
-  | LiteralExpr Literal
   -- ^ treat as the the conjuntion or disjunction of two booleans
+  | LiteralExpr Literal
   deriving (Show, Eq, Data)
 
 data BoolOp
